@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Input, delivery and busy-check services that UserScriptDeploymentTests names on its deployments. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <service verb="read" noun="Orders">
+        <implements service="moqui.jexl.ScriptServices.read#UserScriptDeploymentInput"/>
+        <actions>
+            <set field="input" from="[orders:[[orderId:'SO-1', itemsBackordered:[[sku:'A', quantity:2]]],
+                    [orderId:'SO-2', itemsBackordered:[[sku:'A', quantity:1], [sku:'B', quantity:4]]]]]"/>
+            <set field="inputSummary" from="[source:'orders', deploymentId:scriptDeployment.scriptDeploymentId]"/>
+        </actions>
+    </service>
+    <service verb="read" noun="Nothing">
+        <implements service="moqui.jexl.ScriptServices.read#UserScriptDeploymentInput"/>
+        <actions><set field="message" value="No finished result to read yet."/></actions>
+    </service>
+
+    <service verb="deliver" noun="ToTestEntity">
+        <description>Records each delivery as a moqui.test.TestEntity row: testMedium = deployment id, testLong = the script result as JSON.</description>
+        <implements service="moqui.jexl.ScriptServices.deliver#UserScriptDeploymentResult"/>
+        <actions>
+            <service-call name="create#moqui.test.TestEntity" in-map="[testMedium:scriptDeployment.scriptDeploymentId,
+                    testLong:groovy.json.JsonOutput.toJson(scriptResult)]"/>
+            <set field="message" value="Recorded."/>
+        </actions>
+    </service>
+    <service verb="deliver" noun="Refused">
+        <implements service="moqui.jexl.ScriptServices.deliver#UserScriptDeploymentResult"/>
+        <actions><return error="true" message="The endpoint refused it."/></actions>
+    </service>
+
+    <!-- an ordinary service, not marked as a delivery: a deployment may never name it -->
+    <service verb="delete" noun="Everything">
+        <in-parameters><parameter name="scriptResult" type="Object"/></in-parameters>
+        <actions><service-call name="create#moqui.test.TestEntity" in-map="[testMedium:'USD_TEST_UNMARKED_RAN']"/></actions>
+    </service>
+
+    <!-- a script service written in JEXL: run by org.moqui.jexl.JexlScriptRunner through the .jexl script-runner -->
+    <service verb="sum" noun="Lines" type="script" location="classpath://script/moqui/jexl/test/SumLines.jexl">
+        <in-parameters><parameter name="lines" type="List"/></in-parameters>
+        <out-parameters><parameter name="total" type="BigDecimal"/><parameter name="lineCount" type="Integer"/></out-parameters>
+    </service>
+
+    <service verb="check" noun="QueueFull">
+        <out-parameters><parameter name="busyReason"/></out-parameters>
+        <actions><set field="busyReason" value="the order queue is full"/></actions>
+    </service>
+</services>

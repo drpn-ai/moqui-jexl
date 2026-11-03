@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-definition-3.xsd">
+
+    <!-- ========== User Scripts ========== -->
+    <!-- JEXL a user writes and runs as data, evaluated only by org.moqui.jexl.ScriptSupervisor (no host access,
+        a work budget, size caps and a time limit). An application that scopes scripts by owner adds its owner field
+        with extend-entity and filters on it. -->
+
+    <entity entity-name="UserScript" package="moqui.jexl" use="configuration" cache="never">
+        <description>One user-written JEXL script: its body, the profile it runs under and a sample input to try it on.</description>
+        <field name="userScriptId" type="id" is-pk="true"/>
+        <field name="scriptName" type="text-medium" not-null="true"/>
+        <field name="description" type="text-medium"/>
+        <field name="scriptProfile" type="text-short" not-null="true">
+            <description>EXPRESSION (one expression, no loops) or SCRIPT (statements, loops, lambdas).</description></field>
+        <field name="scriptBody" type="text-long" not-null="true"><description>The JEXL source; it reads only input.</description></field>
+        <field name="sampleInputJson" type="text-long">
+            <description>JSON the script is tried on before it is saved, and its input when a deployment names no input service.</description></field>
+        <field name="isActive" type="text-indicator"/>
+    </entity>
+
+    <entity entity-name="UserScriptDeployment" package="moqui.jexl" use="transactional" cache="never">
+        <description>A user script put to work: on its cron (read in timeZone) the input service reads the input, the
+            script runs, and the delivery service receives what it returned. The script never does I/O itself. Run by
+            org.moqui.jexl.ScriptDeploymentScheduler (moqui.jexl.ScriptServices.run#DueUserScriptDeployments).</description>
+        <field name="scriptDeploymentId" type="id" is-pk="true"/>
+        <field name="userScriptId" type="id" not-null="true"/>
+        <field name="cronExpression" type="text-medium" not-null="true">
+            <description>Quartz cron, e.g. 0 0 9 * * ? (09:00 daily).</description></field>
+        <field name="timeZone" type="text-short"><description>Zone id the cron is read in; the server's zone when empty.</description></field>
+        <field name="inputServiceName" type="text-medium">
+            <description>A service implementing moqui.jexl.ScriptServices.read#UserScriptDeploymentInput, called with scriptDeployment (Map) and userScriptId, returning input (any JSON-shaped
+                value) and optionally inputSummary; no input means nothing runs (NO_INPUT). When empty the script's
+                sampleInputJson is the input.</description></field>
+        <field name="deliveryServiceName" type="text-medium" not-null="true">
+            <description>A service implementing moqui.jexl.ScriptServices.deliver#UserScriptDeploymentResult, called with scriptDeployment (Map) and scriptResult (what the script returned), and only when
+                the result is not empty; an error it adds marks the run NOT_DELIVERED, its message out-parameter is recorded.</description></field>
+        <field name="isActive" type="text-indicator"/>
+        <field name="nextRunDate" type="date-time"><description>When it is next due; set on save and moved forward as each run is claimed.</description></field>
+        <field name="lastRunDate" type="date-time"/>
+        <field name="lastRunStatus" type="text-short">
+            <description>DELIVERED, NOTHING_TO_DELIVER, SCRIPT_ERROR, NO_INPUT, NOT_DELIVERED, SCRIPT_MISSING, WAITING or EXPIRED.</description></field>
+        <field name="lastRunMessage" type="text-medium"/>
+        <field name="lastRunUnits" type="number-integer"><description>Work units the last run's script used.</description></field>
+
+        <relationship type="one" related="moqui.jexl.UserScript" short-alias="script"/>
+
+        <index name="USCRIPT_DEPLOY_DUE">
+            <index-field name="isActive"/>
+            <index-field name="nextRunDate"/>
+        </index>
+    </entity>
+</entities>

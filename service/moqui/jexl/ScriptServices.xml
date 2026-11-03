@@ -1,0 +1,266 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <!-- ========== User Scripts ========== -->
+    <!-- JEXL a user writes as data (moqui.jexl.UserScript), run only by org.moqui.jexl.ScriptSupervisor. None of
+        these are remote: an application exposes them through its own services, with its own owner checks. -->
+
+    <service verb="get" noun="UserScriptLibrary">
+        <description>What an editor shows beside a script: the fn: functions, the profiles and their limits.</description>
+        <out-parameters>
+            <parameter name="library" type="List"><description>[{name, help}]</description></parameter>
+            <parameter name="profiles" type="List"/>
+            <parameter name="limits" type="Map"><description>{EXPRESSION: {maxSourceChars, unitLimit, timeoutMs}, SCRIPT: {...}}</description></parameter>
+        </out-parameters>
+        <actions>
+            <set field="library" from="org.moqui.jexl.ScriptSupervisor.libraryCatalog()"/>
+            <set field="profiles" from="org.moqui.jexl.ScriptSupervisor.PROFILES"/>
+            <set field="limits" from="org.moqui.jexl.ScriptSupervisor.LIMITS"/>
+        </actions>
+    </service>
+
+    <service verb="validate" noun="UserScript">
+        <description>Parses a script without running it: refuses syntax its profile leaves out and any name but input.</description>
+        <in-parameters>
+            <parameter name="scriptProfile" default-value="SCRIPT"/>
+            <parameter name="scriptBody" required="true" allow-html="any"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="ok" type="Boolean"/>
+            <parameter name="error" type="Map"><description>{kind, message, line, column} when not ok</description></parameter>
+        </out-parameters>
+        <actions>
+            <set field="checked" from="org.moqui.jexl.ScriptSupervisor.validate(scriptProfile, scriptBody)"/>
+            <set field="ok" from="checked.ok"/>
+            <set field="error" from="checked.error"/>
+        </actions>
+    </service>
+
+    <service verb="store" noun="UserScript" transaction="ignore">
+        <description>Creates or updates a script after checking it: it must parse under its profile, read only input,
+            and run on its sample input within half its work budget. While the server is busy the trial run is skipped
+            and a note says so. No transaction is held while the trial run runs.</description>
+        <in-parameters>
+            <parameter name="userScriptId"/>
+            <parameter name="scriptName" required="true"/>
+            <parameter name="description"/>
+            <parameter name="scriptProfile" default-value="SCRIPT"/>
+            <parameter name="scriptBody" required="true" allow-html="any"/>
+            <parameter name="sampleInputJson" allow-html="any"/>
+            <parameter name="isActive" default-value="Y"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="userScriptId"/>
+            <parameter name="notes" type="List"/>
+        </out-parameters>
+        <actions>
+            <set field="checked" from="org.moqui.jexl.ScriptSupervisor.validate(scriptProfile, scriptBody)"/>
+            <if condition="!checked.ok"><return error="true"
+                    message="${checked.error.line ? 'Line ' + checked.error.line + ': ' : ''}${checked.error.message}"/></if>
+
+            <set field="busyReason" from="org.moqui.jexl.ScriptLoadGate.busyReason(ec)"/>
+            <if condition="busyReason"><then>
+                <set field="notes" from="['The server is busy (' + busyReason + '), so the script was saved without a trial run on its sample input.']"/>
+            </then><else>
+                <set field="trial" from="org.moqui.jexl.ScriptSupervisor.check(checked.profile, scriptBody, sampleInputJson)"/>
+                <iterate list="trial.problems" entry="problem">
+                    <message error="true">${problem.line ? 'Line ' + problem.line + ': ' : ''}${problem.message}</message></iterate>
+                <check-errors/>
+                <set field="notes" from="trial.notes"/>
+            </else></if>
+
+            <service-call name="store#moqui.jexl.UserScript" out-map="context"
+                    in-map="[userScriptId:userScriptId, scriptName:scriptName, description:description, scriptProfile:checked.profile,
+                        scriptBody:scriptBody, sampleInputJson:sampleInputJson, isActive:isActive]"/>
+        </actions>
+    </service>
+
+    <service verb="run" noun="UserScript" transaction="ignore">
+        <description>Runs a saved script (userScriptId) or the body given, against input, inputJson or else the saved
+            sample. A script that fails or hits a limit is ok=false with the error, not a service error. While the
+            server is busy the script is not run (error kind BUSY).</description>
+        <in-parameters>
+            <parameter name="userScriptId"/>
+            <parameter name="scriptProfile" default-value="SCRIPT"/>
+            <parameter name="scriptBody" allow-html="any"/>
+            <parameter name="input" type="Object"><description>Any JSON-shaped value; copied before the script sees it.</description></parameter>
+            <parameter name="inputJson" allow-html="any"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="ok" type="Boolean"/>
+            <parameter name="scriptResult" type="Object"><description>What the script returned (named so, since result is taken in XML actions).</description></parameter>
+            <parameter name="error" type="Map"><description>{kind, message, line, column} when not ok</description></parameter>
+            <parameter name="units" type="Long"/>
+            <parameter name="elapsedMs" type="Long"/>
+            <parameter name="logs" type="List"/>
+        </out-parameters>
+        <actions>
+            <if condition="userScriptId">
+                <entity-find-one entity-name="moqui.jexl.UserScript" value-field="userScript"/>
+                <if condition="userScript == null"><return error="true" message="Script ${userScriptId} not found."/></if>
+                <set field="scriptProfile" from="userScript.scriptProfile"/>
+                <set field="scriptBody" from="userScript.scriptBody"/>
+                <if condition="input == null &amp;&amp; inputJson == null"><set field="inputJson" from="userScript.sampleInputJson"/></if>
+            </if>
+            <if condition="!scriptBody"><return error="true" message="Give a userScriptId or a scriptBody."/></if>
+
+            <set field="busyReason" from="org.moqui.jexl.ScriptLoadGate.busyReason(ec)"/>
+            <if condition="busyReason">
+                <set field="ok" from="false"/>
+                <set field="error" from="[kind:'BUSY', message:org.moqui.jexl.ScriptLoadGate.busyMessage(busyReason)]"/>
+                <return/>
+            </if>
+
+            <if condition="input == null"><script>
+                try {
+                    input = org.moqui.jexl.ScriptSupervisor.parseInputJson(inputJson)
+                } catch (IllegalArgumentException e) {
+                    ec.message.addError(e.message)
+                }
+            </script><check-errors/></if>
+
+            <set field="run" from="org.moqui.jexl.ScriptSupervisor.evaluate(scriptProfile, scriptBody, input)"/>
+            <set field="ok" from="run.ok"/>
+            <set field="scriptResult" from="run.result"/>
+            <set field="error" from="run.error"/>
+            <set field="units" from="run.units"/>
+            <set field="elapsedMs" from="run.elapsedMs"/>
+            <set field="logs" from="run.logs"/>
+        </actions>
+    </service>
+
+    <!-- ========== User Script Deployments ========== -->
+    <!-- A deployment names only services that implement one of these two interfaces, checked when it is stored and again
+        on every run: the scheduler runs them with no user, so an arbitrary service name would run any service unchecked. -->
+
+    <service verb="read" noun="UserScriptDeploymentInput" type="interface">
+        <description>Reads a deployment's input. Called by the scheduler with no user; check what the deployment may read
+            from its own fields (an owner added with extend-entity, say).</description>
+        <in-parameters>
+            <parameter name="scriptDeployment" type="Map" required="true"/>
+            <parameter name="userScriptId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="input" type="Object"><description>Any JSON-shaped value; none means nothing runs (NO_INPUT).</description></parameter>
+            <parameter name="inputSummary" type="Map"/>
+            <parameter name="message"><description>Recorded when there is no input.</description></parameter>
+        </out-parameters>
+    </service>
+    <service verb="deliver" noun="UserScriptDeploymentResult" type="interface">
+        <description>Delivers what a deployment's script returned (never empty). Called by the scheduler with no user;
+            an error it adds marks the run NOT_DELIVERED.</description>
+        <in-parameters>
+            <parameter name="scriptDeployment" type="Map" required="true"/>
+            <parameter name="scriptResult" type="Object" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="message"><description>Recorded as the run's message.</description></parameter></out-parameters>
+    </service>
+
+
+    <service verb="store" noun="UserScriptDeployment">
+        <description>Creates or updates a deployment after checking its script, cron, time zone and services, and sets
+            its next run date (none while it is switched off).</description>
+        <in-parameters>
+            <parameter name="scriptDeploymentId"/>
+            <parameter name="userScriptId" required="true"/>
+            <parameter name="cronExpression" required="true"/>
+            <parameter name="timeZone"/>
+            <parameter name="inputServiceName"/>
+            <parameter name="deliveryServiceName" required="true"/>
+            <parameter name="isActive" default-value="Y"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="scriptDeploymentId"/>
+            <parameter name="nextRunDate" type="Timestamp"/>
+        </out-parameters>
+        <actions>
+            <entity-find-one entity-name="moqui.jexl.UserScript" value-field="userScript"/>
+            <if condition="userScript == null"><message error="true">Script ${userScriptId} not found.</message></if>
+            <script>
+                try {
+                    org.moqui.impl.service.ScheduledJobRunner.getCron(cronExpression.trim())
+                } catch (Exception e) {
+                    ec.message.addError("'${cronExpression}' is not a Quartz cron expression: ${e.message}")
+                }
+                if (timeZone) {
+                    try { java.time.ZoneId.of(timeZone) } catch (Exception e) { ec.message.addError("'${timeZone}' is not a time zone id.") }
+                }
+            </script>
+            <if condition="inputServiceName &amp;&amp; !org.moqui.jexl.ScriptDeploymentRunner.implementsInterface(ec, inputServiceName, org.moqui.jexl.ScriptDeploymentRunner.INPUT_INTERFACE)">
+                <message error="true">Input service ${inputServiceName} does not implement ${org.moqui.jexl.ScriptDeploymentRunner.INPUT_INTERFACE}.</message></if>
+            <if condition="!org.moqui.jexl.ScriptDeploymentRunner.implementsInterface(ec, deliveryServiceName, org.moqui.jexl.ScriptDeploymentRunner.DELIVERY_INTERFACE)">
+                <message error="true">Delivery service ${deliveryServiceName} does not implement ${org.moqui.jexl.ScriptDeploymentRunner.DELIVERY_INTERFACE}.</message></if>
+            <check-errors/>
+
+            <set field="nextRunDate" from="isActive == 'Y' ? org.moqui.jexl.ScriptDeploymentRunner.nextRunDate(cronExpression, timeZone, ec.user.nowTimestamp) : null"/>
+            <service-call name="store#moqui.jexl.UserScriptDeployment" out-map="context"
+                    in-map="[scriptDeploymentId:scriptDeploymentId, userScriptId:userScriptId, cronExpression:cronExpression.trim(),
+                        timeZone:timeZone, inputServiceName:inputServiceName, deliveryServiceName:deliveryServiceName,
+                        isActive:isActive, nextRunDate:nextRunDate]"/>
+        </actions>
+    </service>
+
+    <service verb="run" noun="UserScriptDeployment" transaction="ignore">
+        <description>Runs one deployment now. By default a preview: the result comes back and nothing is delivered or
+            recorded. deliver=true calls the delivery service and records the outcome on the deployment.</description>
+        <in-parameters>
+            <parameter name="scriptDeploymentId" required="true"/>
+            <parameter name="deliver" type="Boolean" default="false"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="status"/>
+            <parameter name="message"/>
+            <parameter name="scriptResult" type="Object"><description>What the script returned (named so, since result is taken in XML actions).</description></parameter>
+            <parameter name="run" type="Map"><description>{ok, profile, result, units, elapsedMs, logs, error}</description></parameter>
+            <parameter name="inputSummary" type="Map"/>
+        </out-parameters>
+        <actions>
+            <entity-find-one entity-name="moqui.jexl.UserScriptDeployment" value-field="deployment"/>
+            <if condition="deployment == null"><return error="true" message="Script deployment ${scriptDeploymentId} not found."/></if>
+
+            <set field="busyReason" from="org.moqui.jexl.ScriptLoadGate.busyReason(ec)"/>
+            <if condition="busyReason"><return error="true" message="${org.moqui.jexl.ScriptLoadGate.busyMessage(busyReason)}"/></if>
+
+            <set field="outcome" from="org.moqui.jexl.ScriptDeploymentRunner.execute(ec, deployment, deliver)"/>
+            <if condition="deliver"><script>org.moqui.jexl.ScriptDeploymentRunner.recordOutcome(ec, scriptDeploymentId, outcome)</script></if>
+            <set field="status" from="outcome.status"/>
+            <set field="message" from="outcome.message"/>
+            <set field="scriptResult" from="outcome.result"/>
+            <set field="run" from="outcome.run"/>
+            <set field="inputSummary" from="outcome.inputSummary"/>
+        </actions>
+    </service>
+
+    <service verb="run" noun="DueUserScriptDeployments" authenticate="anonymous-all" transaction="ignore">
+        <description>Runs the deployments that are due (org.moqui.jexl.ScriptDeploymentScheduler, every script_deployment_check_seconds) and stamps each outcome
+            on it; one failing never stops the others. While the server is busy a due one waits, then expires.</description>
+        <in-parameters>
+            <parameter name="nowTimestamp" type="Timestamp"/>
+            <parameter name="limit" type="Integer" default-value="50"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="ran" type="Integer"/>
+            <parameter name="held" type="Integer"><description>Deployments left WAITING or marked EXPIRED because the server was busy.</description></parameter>
+            <parameter name="results" type="List"/>
+        </out-parameters>
+        <actions>
+            <set field="scan" from="org.moqui.jexl.ScriptDeploymentRunner.scanDue(ec, nowTimestamp, limit)"/>
+            <set field="ran" from="scan.ran"/>
+            <set field="held" from="scan.held"/>
+            <set field="results" from="scan.results"/>
+        </actions>
+    </service>
+</services>

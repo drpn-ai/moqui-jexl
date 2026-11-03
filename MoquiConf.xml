@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
+    <!-- script_deployment_check_seconds: how often due UserScriptDeployments run (0 turns the scheduler off) -->
+    <default-property name="script_deployment_check_seconds" value="60"/>
+
+    <tools>
+        <!-- runs due UserScriptDeployments on the factory's scheduled executor, like ScheduledJobRunner for service jobs -->
+        <tool-factory class="org.moqui.jexl.ScriptDeploymentToolFactory" init-priority="60" disabled="false"/>
+    </tools>
+
+    <resource-facade>
+        <!-- .jexl files run sandboxed (org.moqui.jexl.ScriptSupervisor), beside the .groovy and .xml runners -->
+        <script-runner extension=".jexl" class="org.moqui.jexl.JexlScriptRunner"/>
+    </resource-facade>
+</moqui-conf>

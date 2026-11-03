@@ -1,0 +1,2 @@
+// what a .jexl file can see of the context it runs in
+{'name': input.name, 'tags': input.tags, 'ec': input.ec ?? 'absent', 'context': input.context ?? 'absent'}

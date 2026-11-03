@@ -1,0 +1,5 @@
+// sums quantity over input.lines; the map it returns is the script service's out-parameters
+var total = 0;
+var count = 0;
+for (var line : input.lines ?? []) { total = total + line.quantity; count = count + 1; }
+{'total': total, 'lineCount': count}
