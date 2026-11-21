@@ -96,8 +96,8 @@ class ScriptDeliveries {
         if (userId && userId != ec.user.userId) {
             return [error: "A script notifies only its owner, not ${userId}.".toString()] as Map<String, Object>
         }
-        if (groupId && !ec.user.userGroupIdSet.contains(groupId)) {
-            return [error: "A script notifies only groups its owner belongs to, not ${groupId}.".toString()] as Map<String, Object>
+        if (groupId && !explicitMember(ec, ec.user.userId, groupId)) {
+            return [error: "A script notifies only groups its owner is an active member of, not ${groupId}.".toString()] as Map<String, Object>
         }
         if (!userId && !groupId) userId = ec.user.userId
         String scriptName = scriptName(ec, scriptDeployment)
@@ -105,6 +105,16 @@ class ScriptDeliveries {
                 message: [scriptName: scriptName, summary: scriptResult?.get('summary'),
                           fileNames: (files ?: []).collect { Map f -> f.name.toString() }]] as Map)
         return [outcome: 'OK', message: "Notified ${topic}.".toString()] as Map<String, Object>
+    }
+
+    /** An explicit, current UserGroupMember row (never the implicit ALL_USERS). */
+    private static boolean explicitMember(ExecutionContext ec, String userId, String groupId) {
+        if (!userId || groupId == 'ALL_USERS') return false
+        java.sql.Timestamp now = ec.user.nowTimestamp
+        return ec.entity.find('moqui.security.UserGroupMember').condition([userId: userId, userGroupId: groupId])
+                .disableAuthz().useCache(false).list().any { EntityValue m ->
+            (m.fromDate == null || !((java.sql.Timestamp) m.fromDate).after(now)) && (m.thruDate == null || ((java.sql.Timestamp) m.thruDate).after(now))
+        }
     }
 
     private static String scriptName(ExecutionContext ec, Map scriptDeployment) {

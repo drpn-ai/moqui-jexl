@@ -161,4 +161,13 @@ class ScriptDeliveryTests extends Specification {
         self.outcome == 'OK'
         sent.size() == 1
     }
+
+    def "everyoneIsNotTheOwnersGroup"() {
+        when:
+        Map out = deliver('deliver#ScriptNotification', [topic: 'JexlScriptResult', userGroupId: 'ALL_USERS'])
+
+        then:
+        out.errors.contains('ALL_USERS')
+        sent.isEmpty()
+    }
 }
