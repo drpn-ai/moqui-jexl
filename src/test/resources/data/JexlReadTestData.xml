@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<entity-facade-xml type="test">
+    <moqui.security.UserAccount userId="JEXL_READER" username="jexl.reader" userFullName="Script Reader"/>
+    <moqui.security.UserGroup userGroupId="JEXL_TEST_READERS" description="Readers in the moqui-jexl tests"/>
+    <moqui.security.UserGroupMember userGroupId="JEXL_TEST_READERS" userId="JEXL_READER" fromDate="2020-01-01 00:00:00"/>
+
+    <moqui.security.ArtifactGroupMember artifactGroupId="JEXL_READABLE" artifactName="jexl.test.ReadThing"
+            nameIsPattern="N" artifactTypeEnumId="AT_ENTITY" inheritAuthz="N"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="JEXL_READABLE" artifactName="jexl.test.ThingWithUser"
+            nameIsPattern="N" artifactTypeEnumId="AT_ENTITY" inheritAuthz="N"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="JEXL_TEST_READABLE" userGroupId="JEXL_TEST_READERS" artifactGroupId="JEXL_READABLE"
+            authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_VIEW"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="JEXL_TEST_SOURCES" userGroupId="JEXL_TEST_READERS" artifactGroupId="JEXL_SOURCES"
+            authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
+
+    <moqui.security.EntityFilterSet entityFilterSetId="JEXL_TEST_OWN_THINGS" description="Only the reader's own things"/>
+    <moqui.security.EntityFilter entityFilterId="JEXL_TEST_OWN_THINGS" entityFilterSetId="JEXL_TEST_OWN_THINGS"
+            entityName="jexl.test.ReadThing" filterMap="[ownerTag:ec.user.userId]"/>
+    <moqui.security.ArtifactAuthzFilter artifactAuthzId="JEXL_TEST_READABLE" entityFilterSetId="JEXL_TEST_OWN_THINGS"/>
+
+    <jexl.test.ReadThing thingId="RT1" ownerTag="JEXL_READER" statusId="OPEN" qty="2" madeDate="2026-11-20 10:00:00"/>
+    <jexl.test.ReadThing thingId="RT2" ownerTag="JEXL_READER" statusId="DONE" qty="3" madeDate="2026-11-20 11:00:00"/>
+    <jexl.test.ReadThing thingId="RT3" ownerTag="SOMEONE_ELSE" statusId="OPEN" qty="5" madeDate="2026-11-20 12:00:00"/>
+    <jexl.test.ReadThing thingId="RT4" ownerTag="JEXL_READER" statusId="OPEN" qty="7" madeDate="2026-10-01 12:00:00"/>
+</entity-facade-xml>

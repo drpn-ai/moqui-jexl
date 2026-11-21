@@ -168,6 +168,42 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- A deployment names only services that implement one of these two interfaces, checked when it is stored and again
         on every run: the scheduler runs them with no user, so an arbitrary service name would run any service unchecked. -->
 
+    <service verb="read" noun="ScriptSource" type="interface">
+        <description>A read source for the read step. Called logged in as the script's owner with authorization on. It
+            hands back at most maxRows rows (plain maps) for one input of a read spec, applying the input's fields,
+            where, window, groupBy, measures and orderBy (org.moqui.jexl.script.ReadConditions can do them in memory), or
+            an error {kind: READ_NOT_ALLOWED, READ_ERROR or READ_TOO_LARGE, message}.</description>
+        <in-parameters>
+            <parameter name="input" type="Map" required="true"><description>The input as written in the read spec.</description></parameter>
+            <parameter name="ownerUserId"/>
+            <parameter name="runDate" type="Timestamp"/>
+            <parameter name="timeZone"/>
+            <parameter name="maxRows" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="rows" type="List"/>
+            <parameter name="rowCount" type="Long"/>
+            <parameter name="error" type="Map"/>
+        </out-parameters>
+    </service>
+    <service verb="read" noun="EntityScriptSource">
+        <description>The built-in entity source (org.moqui.jexl.script.EntitySource): only entities listed in the
+            artifact group JEXL_READABLE, never moqui.*, read as the logged-in owner so the owner's grant and its filters
+            apply.</description>
+        <implements service="moqui.jexl.ScriptServices.read#ScriptSource"/>
+        <actions><script><![CDATA[
+            if (ownerUserId && ownerUserId != ec.user.userId) {
+                error = [kind: 'READ_NOT_ALLOWED', message: 'The entity source reads only as the script owner.']
+                return
+            }
+            Map out = org.moqui.jexl.script.EntitySource.read(ec, input, runDate ?: ec.user.nowTimestamp, timeZone,
+                    (maxRows ?: org.moqui.jexl.ScriptProfiles.get('SCRIPT').maxReadRows) as int)
+            rows = out.rows
+            rowCount = out.rowCount
+            error = out.error
+        ]]></script></actions>
+    </service>
+
     <service verb="read" noun="UserScriptDeploymentInput" type="interface">
         <description>Reads a deployment's input. Called by the scheduler with no user; check what the deployment may read
             from its own fields (an owner added with extend-entity, say).</description>

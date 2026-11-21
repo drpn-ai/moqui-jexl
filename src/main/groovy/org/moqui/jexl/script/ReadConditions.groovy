@@ -201,36 +201,71 @@ class ReadConditions {
 
     /** In-memory group-by: one row per distinct groupBy values (first-seen order), with each measure under its as name. */
     static List<Map> group(List<Map> rows, List<String> groupBy, List<Map> measures) {
-        Map<List, Map> groups = new LinkedHashMap<>()
-        Map<List, List<Map>> members = new LinkedHashMap<>()
-        for (Map row : rows) {
-            List key = groupBy.collect { String f -> row.get(f) }
-            if (!groups.containsKey(key)) {
-                Map out = new LinkedHashMap()
-                groupBy.eachWithIndex { String f, int i -> out.put(f, key[i]) }
-                groups.put(key, out)
-                members.put(key, [])
-            }
-            members.get(key).add(row)
-        }
-        for (Map.Entry<List, Map> entry : groups.entrySet()) {
-            List<Map> group = members.get(entry.key)
-            for (Map measure : measures) entry.value.put(measure.get("as"), measureOf(group, measure))
-        }
-        return new ArrayList<Map>(groups.values())
+        GroupAccumulator groups = new GroupAccumulator(groupBy, measures)
+        for (Map row : rows) groups.add(row)
+        return groups.rows()
     }
 
-    private static Object measureOf(List<Map> group, Map measure) {
-        String fn = measure.get('fn')
-        if (fn == 'count') return (long) group.size()
-        List values = group.collect { Map r -> r.get(measure.get('field')) }.findAll { it != null }
-        if (fn == 'min') return values ? values.min { Object x, Object y -> compare(x, y) } : null
-        if (fn == 'max') return values ? values.max { Object x, Object y -> compare(x, y) } : null
-        List<BigDecimal> numbers = values.collect { Object v -> number(v) }.findAll { it != null } as List<BigDecimal>
-        if (numbers.isEmpty()) return null
-        BigDecimal sum = numbers.inject(BigDecimal.ZERO) { BigDecimal acc, BigDecimal v -> acc + v } as BigDecimal
-        if (fn == 'sum') return plain(sum)
-        return plain(sum.divide(new BigDecimal(numbers.size()), 10, RoundingMode.HALF_UP))
+    /**
+     * Groups rows one at a time, so a source can stream any number of records while holding only one entry per group;
+     * size() tells it when the groups pass its cap.
+     */
+    static class GroupAccumulator {
+        final List<String> groupBy
+        final List<Map> measures
+        private final Map<List, Object[]> state = new LinkedHashMap<>()
+
+        GroupAccumulator(List<String> groupBy, List<Map> measures) {
+            this.groupBy = groupBy ?: []
+            this.measures = measures ?: []
+        }
+
+        int size() { state.size() }
+
+        void add(Map row) {
+            List key = groupBy.collect { String f -> row.get(f) }
+            Object[] slots = state.get(key)
+            if (slots == null) {
+                // per measure: [count, sum, min, max, numbers counted]
+                slots = new Object[measures.size()]
+                for (int i = 0; i < measures.size(); i++) slots[i] = [0L, BigDecimal.ZERO, null, null, 0L] as Object[]
+                state.put(key, slots)
+            }
+            for (int i = 0; i < measures.size(); i++) {
+                Object[] slot = (Object[]) slots[i]
+                Map measure = measures[i]
+                slot[0] = (Long) slot[0] + 1L
+                if (measure.get('fn') == 'count') continue
+                Object value = row.get(measure.get('field'))
+                if (value == null) continue
+                if (slot[2] == null || compare(value, slot[2]) < 0) slot[2] = value
+                if (slot[3] == null || compare(value, slot[3]) > 0) slot[3] = value
+                BigDecimal n = number(value)
+                if (n != null) { slot[1] = ((BigDecimal) slot[1]) + n; slot[4] = (Long) slot[4] + 1L }
+            }
+        }
+
+        List<Map> rows() {
+            List<Map> out = []
+            for (Map.Entry<List, Object[]> entry : state.entrySet()) {
+                Map row = new LinkedHashMap()
+                groupBy.eachWithIndex { String f, int i -> row.put(f, entry.key[i]) }
+                for (int i = 0; i < measures.size(); i++) {
+                    Object[] slot = (Object[]) entry.value[i]
+                    String fn = measures[i].get('fn')
+                    Object value
+                    if (fn == 'count') value = slot[0]
+                    else if (fn == 'min') value = slot[2]
+                    else if (fn == 'max') value = slot[3]
+                    else if ((Long) slot[4] == 0L) value = null
+                    else if (fn == 'sum') value = plain((BigDecimal) slot[1])
+                    else value = plain(((BigDecimal) slot[1]).divide(new BigDecimal((Long) slot[4]), 10, RoundingMode.HALF_UP))
+                    row.put(measures[i].get('as'), value)
+                }
+                out.add(row)
+            }
+            return out
+        }
     }
 
     private static Object plain(BigDecimal value) {

@@ -54,7 +54,8 @@ test {
     testLogging { events "passed", "skipped", "failed"; showExceptions = true; exceptionFormat = 'full' }
     maxParallelForks 1
     systemProperty 'moqui.runtime', runtimeDir.absolutePath
-    systemProperty 'moqui.conf', 'conf/MoquiDevConf.xml'
+    // test-only entities come from the component's own test conf (Moqui's defaults otherwise)
+    systemProperty 'moqui.conf', projectDir.absolutePath + '/src/test/resources/conf/JexlTestConf.xml'
     systemProperty 'moqui.init.static', 'true'
     // the tests run each pass by hand (ScriptDeploymentScheduler.runDue), so the timed scheduler stays off
     systemProperty 'script_deployment_check_seconds', '0'
