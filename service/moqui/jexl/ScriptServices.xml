@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
 
     <!-- ========== User Scripts ========== -->
-    <!-- JEXL a user writes as data (moqui.jexl.UserScript), run only by org.moqui.jexl.ScriptSupervisor. None of
+    <!-- JEXL a user writes as data (jexl.script.UserScript), run only by org.moqui.jexl.ScriptSupervisor. None of
         these are remote: an application exposes them through its own services, with its own owner checks. -->
 
     <service verb="get" noun="UserScriptLibrary">
@@ -104,7 +104,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <set field="notes" from="trial.notes"/>
             </else></if>
 
-            <service-call name="store#moqui.jexl.UserScript" out-map="context"
+            <service-call name="store#jexl.script.UserScript" out-map="context"
                     in-map="[userScriptId:userScriptId, scriptName:scriptName, description:description, scriptProfile:checked.profile,
                         scriptBody:scriptBody, sampleInputJson:sampleInputJson, isActive:isActive]"/>
         </actions>
@@ -131,7 +131,7 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
         <actions>
             <if condition="userScriptId">
-                <entity-find-one entity-name="moqui.jexl.UserScript" value-field="userScript"/>
+                <entity-find-one entity-name="jexl.script.UserScript" value-field="userScript"/>
                 <if condition="userScript == null"><return error="true" message="Script ${userScriptId} not found."/></if>
                 <set field="scriptProfile" from="userScript.scriptProfile"/>
                 <set field="scriptBody" from="userScript.scriptBody"/>
@@ -209,7 +209,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="nextRunDate" type="Timestamp"/>
         </out-parameters>
         <actions>
-            <entity-find-one entity-name="moqui.jexl.UserScript" value-field="userScript"/>
+            <entity-find-one entity-name="jexl.script.UserScript" value-field="userScript"/>
             <if condition="userScript == null"><message error="true">Script ${userScriptId} not found.</message></if>
             <script>
                 try {
@@ -228,10 +228,13 @@ along with this software (see the LICENSE.md file). If not, see
             <check-errors/>
 
             <set field="nextRunDate" from="isActive == 'Y' ? org.moqui.jexl.ScriptDeploymentRunner.nextRunDate(cronExpression, timeZone, ec.user.nowTimestamp) : null"/>
-            <service-call name="store#moqui.jexl.UserScriptDeployment" out-map="context"
+            <service-call name="store#jexl.script.UserScriptDeployment" out-map="context"
                     in-map="[scriptDeploymentId:scriptDeploymentId, userScriptId:userScriptId, cronExpression:cronExpression.trim(),
-                        timeZone:timeZone, inputServiceName:inputServiceName, deliveryServiceName:deliveryServiceName,
+                        timeZone:timeZone, inputServiceName:inputServiceName, ownerUserId:ec.user.userId,
                         isActive:isActive, nextRunDate:nextRunDate]"/>
+            <!-- NOTE: one delivery for now (seq 01); several deliveries per deployment come with the deliveries list -->
+            <service-call name="store#jexl.script.UserScriptDeploymentDelivery"
+                    in-map="[scriptDeploymentId:scriptDeploymentId, deliverySeqId:'01', deliveryServiceName:deliveryServiceName, isActive:'Y']"/>
         </actions>
     </service>
 
@@ -250,7 +253,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="inputSummary" type="Map"/>
         </out-parameters>
         <actions>
-            <entity-find-one entity-name="moqui.jexl.UserScriptDeployment" value-field="deployment"/>
+            <entity-find-one entity-name="jexl.script.UserScriptDeployment" value-field="deployment"/>
             <if condition="deployment == null"><return error="true" message="Script deployment ${scriptDeploymentId} not found."/></if>
 
             <set field="busyReason" from="org.moqui.jexl.ScriptLoadGate.busyReason(ec)"/>

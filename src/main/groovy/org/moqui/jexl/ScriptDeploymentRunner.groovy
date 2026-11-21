@@ -28,7 +28,7 @@ import java.time.ZoneId
 import java.time.ZonedDateTime
 
 /**
- * A user script put to work (moqui.jexl.UserScriptDeployment): on its cron, in its own time zone, the input service
+ * A user script put to work (jexl.script.UserScriptDeployment): on its cron, in its own time zone, the input service
  * reads the input (or the script's sample is used), the script runs in ScriptSupervisor, and the delivery service
  * receives what it returned as scriptResult. The script stays pure: it reads and returns data, the services do the I/O.
  *
@@ -37,8 +37,8 @@ import java.time.ZonedDateTime
 class ScriptDeploymentRunner {
     protected final static Logger logger = LoggerFactory.getLogger(ScriptDeploymentRunner.class)
 
-    static final String ENTITY = 'moqui.jexl.UserScriptDeployment'
-    static final String SCRIPT_ENTITY = 'moqui.jexl.UserScript'
+    static final String ENTITY = 'jexl.script.UserScriptDeployment'
+    static final String SCRIPT_ENTITY = 'jexl.script.UserScript'
     /** the only services a deployment may name: the scheduler runs them with no user, so a free name would run anything */
     static final String INPUT_INTERFACE = 'moqui.jexl.ScriptServices.read#UserScriptDeploymentInput'
     static final String DELIVERY_INTERFACE = 'moqui.jexl.ScriptServices.deliver#UserScriptDeploymentResult'
@@ -107,7 +107,11 @@ class ScriptDeploymentRunner {
         if (isNothing(result)) return base + [status: NOTHING_TO_DELIVER, message: 'The script returned nothing, so nothing was delivered.']
         if (!deliver) return base + [status: PREVIEW, message: 'Preview only: nothing was delivered.']
 
-        String deliveryServiceName = deployment.deliveryServiceName
+        // NOTE: the first active delivery, until deployments deliver to all of theirs
+        EntityValue firstDelivery = ec.entity.find('jexl.script.UserScriptDeploymentDelivery')
+                .condition('scriptDeploymentId', deployment.scriptDeploymentId).condition('isActive', 'Y')
+                .orderBy('deliverySeqId').useCache(false).list().getFirst()
+        String deliveryServiceName = firstDelivery?.getString('deliveryServiceName')
         if (!implementsInterface(ec, deliveryServiceName, DELIVERY_INTERFACE)) {
             return base + [status: NOT_DELIVERED, message: "Not delivered: ${deliveryServiceName} does not implement ${DELIVERY_INTERFACE}.".toString()]
         }

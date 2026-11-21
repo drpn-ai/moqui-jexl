@@ -46,8 +46,9 @@ class UserScriptDeploymentTests extends Specification {
 
     def cleanupSpec() {
         ec.artifactExecution.disableAuthz()
-        ec.entity.find('moqui.jexl.UserScriptDeployment').condition('scriptDeploymentId', 'like', 'USD_TEST_%').deleteAll()
-        ec.entity.find('moqui.jexl.UserScript').condition('userScriptId', 'like', 'USS_TEST_%').deleteAll()
+        ec.entity.find('jexl.script.UserScriptDeploymentDelivery').condition('scriptDeploymentId', 'like', 'USD_TEST_%').deleteAll()
+        ec.entity.find('jexl.script.UserScriptDeployment').condition('scriptDeploymentId', 'like', 'USD_TEST_%').deleteAll()
+        ec.entity.find('jexl.script.UserScript').condition('userScriptId', 'like', 'USS_TEST_%').deleteAll()
         ec.entity.find('moqui.test.TestEntity').condition('testMedium', 'like', 'USD_TEST_%').deleteAll()
         ec.artifactExecution.enableAuthz()
         ['script_hold_heap_percent', 'script_hold_cpu_percent', 'script_busy_service'].each { System.clearProperty(it) }
@@ -78,12 +79,12 @@ class UserScriptDeploymentTests extends Specification {
 
     /** makes a deployment due at dueAt */
     void dueAt(String id, Timestamp dueAt) {
-        ec.entity.find('moqui.jexl.UserScriptDeployment').condition('scriptDeploymentId', id).one()
+        ec.entity.find('jexl.script.UserScriptDeployment').condition('scriptDeploymentId', id).one()
                 .set('nextRunDate', dueAt).update()
     }
 
     EntityValue deployment(String id) {
-        ec.entity.find('moqui.jexl.UserScriptDeployment').condition('scriptDeploymentId', id).useCache(false).one()
+        ec.entity.find('jexl.script.UserScriptDeployment').condition('scriptDeploymentId', id).useCache(false).one()
     }
 
     List<EntityValue> deliveries(String id) {
@@ -100,7 +101,7 @@ class UserScriptDeploymentTests extends Specification {
         then:
         ec.message.hasError()
         ec.message.errorsString.contains('On its sample input the script stops')
-        ec.entity.find('moqui.jexl.UserScript').condition('userScriptId', 'USS_TEST_BAD').one() == null
+        ec.entity.find('jexl.script.UserScript').condition('userScriptId', 'USS_TEST_BAD').one() == null
     }
 
     def "a saved script runs on its sample, and a refused call is an outcome not a service error"() {
@@ -146,7 +147,7 @@ class UserScriptDeploymentTests extends Specification {
         ec.message.clearErrors()
         // a row written straight to the database is refused again when it runs
         storeDeployment('USD_TEST_UNMARKED', 'USS_TEST_BACK', "${TEST_SVC}.deliver#ToTestEntity")
-        ec.entity.find('moqui.jexl.UserScriptDeployment').condition('scriptDeploymentId', 'USD_TEST_UNMARKED').one()
+        ec.entity.find('jexl.script.UserScriptDeploymentDelivery').condition('scriptDeploymentId', 'USD_TEST_UNMARKED').one()
                 .set('deliveryServiceName', "${TEST_SVC}.delete#Everything".toString()).update()
         Map out = call("${SVC}.run#UserScriptDeployment", [scriptDeploymentId: 'USD_TEST_UNMARKED', deliver: true])
 
@@ -209,7 +210,7 @@ class UserScriptDeploymentTests extends Specification {
         storeDeployment('USD_TEST_NOINPUT', 'USS_TEST_BACK', "${TEST_SVC}.deliver#ToTestEntity", "${TEST_SVC}.read#Nothing")
         storeDeployment('USD_TEST_REFUSED', 'USS_TEST_BACK', "${TEST_SVC}.deliver#Refused")
         storeDeployment('USD_TEST_MISSING', 'USS_TEST_GONE', "${TEST_SVC}.deliver#ToTestEntity")
-        call('update#moqui.jexl.UserScript', [userScriptId: 'USS_TEST_GONE', isActive: 'N'])
+        call('update#jexl.script.UserScript', [userScriptId: 'USS_TEST_GONE', isActive: 'N'])
         ['USD_TEST_NOTHING', 'USD_TEST_NOINPUT', 'USD_TEST_REFUSED', 'USD_TEST_MISSING'].each { dueAt(it, at('2031-01-01T09:00:00Z')) }
 
         when:

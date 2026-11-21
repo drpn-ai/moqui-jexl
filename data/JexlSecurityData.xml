@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<entity-facade-xml type="seed">
+    <!-- JEXL_READABLE: the entities user scripts may read through the built-in entity source. Empty on purpose: an
+        application lists its own entities (AT_ENTITY members), grants view on this group to user groups, and attaches its
+        filter sets (ArtifactAuthzFilter) to those grants. moqui.* entities are always refused. -->
+    <moqui.security.ArtifactGroup artifactGroupId="JEXL_READABLE" description="Entities user scripts may read"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="JEXL_READABLE_ADMIN" userGroupId="ADMIN" artifactGroupId="JEXL_READABLE"
+            authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_VIEW"/>
+
+    <!-- JEXL_SOURCES: the read source services (built in and the application's) the read step may call as the owner. -->
+    <moqui.security.ArtifactGroup artifactGroupId="JEXL_SOURCES" description="User script read sources"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="JEXL_SOURCES" artifactName="moqui.jexl.ScriptServices.read#EntityScriptSource"
+            nameIsPattern="N" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="JEXL_SOURCES_ADMIN" userGroupId="ADMIN" artifactGroupId="JEXL_SOURCES"
+            authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
+
+    <!-- JEXL_SCRIPT_EDIT: write, try and run scripts. -->
+    <moqui.security.ArtifactGroup artifactGroupId="JEXL_SCRIPT_EDIT" description="Write and run user scripts"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="JEXL_SCRIPT_EDIT" artifactName="moqui.jexl.ScriptServices.validate#UserScript"
+            nameIsPattern="N" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="JEXL_SCRIPT_EDIT" artifactName="moqui.jexl.ScriptServices.store#UserScript"
+            nameIsPattern="N" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="JEXL_SCRIPT_EDIT" artifactName="moqui.jexl.ScriptServices.run#UserScript"
+            nameIsPattern="N" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="JEXL_SCRIPT_EDIT" artifactName="moqui.jexl.ScriptServices.get#UserScriptLibrary"
+            nameIsPattern="N" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="JEXL_SCRIPT_EDIT_ADMIN" userGroupId="ADMIN" artifactGroupId="JEXL_SCRIPT_EDIT"
+            authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
+
+    <!-- JEXL_SCRIPT_SCHEDULE: turn deployments on, change their deliveries, edit a script someone else's deployment runs,
+        and switch scripts off. -->
+    <moqui.security.ArtifactGroup artifactGroupId="JEXL_SCRIPT_SCHEDULE" description="Schedule user scripts"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="JEXL_SCRIPT_SCHEDULE" artifactName="moqui.jexl.ScriptServices.store#UserScriptDeployment"
+            nameIsPattern="N" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="JEXL_SCRIPT_SCHEDULE" artifactName="moqui.jexl.ScriptServices.run#UserScriptDeployment"
+            nameIsPattern="N" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="JEXL_SCRIPT_SCHEDULE" artifactName="moqui.jexl.ScriptServices.set#UserScriptsEnabled"
+            nameIsPattern="N" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="JEXL_SCRIPT_SCHEDULE_ADMIN" userGroupId="ADMIN" artifactGroupId="JEXL_SCRIPT_SCHEDULE"
+            authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
+</entity-facade-xml>

@@ -17,51 +17,105 @@ along with this software (see the LICENSE.md file). If not, see
 
     <!-- ========== User Scripts ========== -->
     <!-- JEXL a user writes and runs as data, evaluated only by org.moqui.jexl.ScriptSupervisor (no host access,
-        a work budget, size caps and a time limit). An application that scopes scripts by owner adds its owner field
-        with extend-entity and filters on it. -->
+        a work budget, size caps and a time limit). The package is jexl.script, not moqui.*: Moqui never applies entity
+        filters to moqui.* entities, and an application that scopes scripts by owner adds its owner field with
+        extend-entity plus an EntityFilter on these entities. -->
 
-    <entity entity-name="UserScript" package="moqui.jexl" use="configuration" cache="never">
-        <description>One user-written JEXL script: its body, the profile it runs under and a sample input to try it on.</description>
+    <entity entity-name="UserScript" package="jexl.script" use="configuration" cache="never">
+        <description>One user-written JEXL script: its read spec, its body, the profile it runs under and a sample input
+            to try it on.</description>
         <field name="userScriptId" type="id" is-pk="true"/>
         <field name="scriptName" type="text-medium" not-null="true"/>
         <field name="description" type="text-medium"/>
         <field name="scriptProfile" type="text-short" not-null="true">
-            <description>EXPRESSION (one expression, no loops) or SCRIPT (statements, loops, lambdas).</description></field>
+            <description>A profile name from org.moqui.jexl.ScriptProfiles (EXPRESSION, SCRIPT, or one the application adds).</description></field>
+        <field name="readSpecJson" type="text-long">
+            <description>The read step (JSON): the inputs read before the script runs, each from the entity source or a
+                ScriptSource. Empty: the script's input is its sample, or what the caller passes.</description></field>
         <field name="scriptBody" type="text-long" not-null="true"><description>The JEXL source; it reads only input.</description></field>
         <field name="sampleInputJson" type="text-long">
-            <description>JSON the script is tried on before it is saved, and its input when a deployment names no input service.</description></field>
+            <description>JSON the script is tried on before it is saved, and its input when there is no read spec and no input service.</description></field>
+        <field name="ownerUserId" type="id"><description>Who last saved it.</description></field>
         <field name="isActive" type="text-indicator"/>
     </entity>
 
-    <entity entity-name="UserScriptDeployment" package="moqui.jexl" use="transactional" cache="never">
-        <description>A user script put to work: on its cron (read in timeZone) the input service reads the input, the
-            script runs, and the delivery service receives what it returned. The script never does I/O itself. Run by
-            org.moqui.jexl.ScriptDeploymentScheduler (moqui.jexl.ScriptServices.run#DueUserScriptDeployments).</description>
+    <entity entity-name="UserScriptDeployment" package="jexl.script" use="transactional" cache="never">
+        <description>A user script put to work: on its cron (read in timeZone), as its owner, the read step (or the input
+            service) reads the input, the script runs, and each active delivery receives the result. The script never does
+            I/O itself. Run by org.moqui.jexl.ScriptDeploymentScheduler (moqui.jexl.ScriptServices.run#DueUserScriptDeployments).</description>
         <field name="scriptDeploymentId" type="id" is-pk="true"/>
         <field name="userScriptId" type="id" not-null="true"/>
         <field name="cronExpression" type="text-medium" not-null="true">
             <description>Quartz cron, e.g. 0 0 9 * * ? (09:00 daily).</description></field>
         <field name="timeZone" type="text-short"><description>Zone id the cron is read in; the server's zone when empty.</description></field>
+        <field name="ownerUserId" type="id" not-null="true">
+            <description>The user the run reads as, re-checked at every run (enabled, and allowed to schedule). Whoever turns
+                the deployment on, or changes its deliveries or its script, becomes the owner.</description></field>
         <field name="inputServiceName" type="text-medium">
-            <description>A service implementing moqui.jexl.ScriptServices.read#UserScriptDeploymentInput, called with scriptDeployment (Map) and userScriptId, returning input (any JSON-shaped
-                value) and optionally inputSummary; no input means nothing runs (NO_INPUT). When empty the script's
-                sampleInputJson is the input.</description></field>
-        <field name="deliveryServiceName" type="text-medium" not-null="true">
-            <description>A service implementing moqui.jexl.ScriptServices.deliver#UserScriptDeploymentResult, called with scriptDeployment (Map) and scriptResult (what the script returned), and only when
-                the result is not empty; an error it adds marks the run NOT_DELIVERED, its message out-parameter is recorded.</description></field>
+            <description>A service implementing moqui.jexl.ScriptServices.read#UserScriptDeploymentInput, for hosts that
+                compute the input in code; the script's read spec is the default path.</description></field>
         <field name="isActive" type="text-indicator"/>
         <field name="nextRunDate" type="date-time"><description>When it is next due; set on save and moved forward as each run is claimed.</description></field>
         <field name="lastRunDate" type="date-time"/>
-        <field name="lastRunStatus" type="text-short">
-            <description>DELIVERED, NOTHING_TO_DELIVER, SCRIPT_ERROR, NO_INPUT, NOT_DELIVERED, SCRIPT_MISSING, WAITING or EXPIRED.</description></field>
+        <field name="lastRunStatus" type="text-short"><description>The newest run's status (see UserScriptRun.statusId).</description></field>
         <field name="lastRunMessage" type="text-medium"/>
         <field name="lastRunUnits" type="number-integer"><description>Work units the last run's script used.</description></field>
 
-        <relationship type="one" related="moqui.jexl.UserScript" short-alias="script"/>
+        <relationship type="one" related="jexl.script.UserScript" short-alias="script"/>
+        <relationship type="many" related="jexl.script.UserScriptDeploymentDelivery" short-alias="deliveries">
+            <key-map field-name="scriptDeploymentId"/></relationship>
 
         <index name="USCRIPT_DEPLOY_DUE">
             <index-field name="isActive"/>
             <index-field name="nextRunDate"/>
         </index>
+    </entity>
+
+    <entity entity-name="UserScriptDeploymentDelivery" package="jexl.script" use="transactional" cache="never">
+        <description>One place a deployment's result goes: a service implementing
+            moqui.jexl.ScriptServices.deliver#UserScriptDeploymentResult, with its parameters. A deployment may have several;
+            one failing never stops the others.</description>
+        <field name="scriptDeploymentId" type="id" is-pk="true"/>
+        <field name="deliverySeqId" type="id" is-pk="true"/>
+        <field name="deliveryServiceName" type="text-medium" not-null="true"/>
+        <field name="parametersJson" type="text-long"><description>The delivery's own parameters (addresses, a topic, ...).</description></field>
+        <field name="isActive" type="text-indicator"/>
+        <field name="lastOutcome" type="text-short"><description>OK, TOO_LARGE or FAILED, from the newest run.</description></field>
+        <field name="lastMessage" type="text-medium"/>
+
+        <relationship type="one" related="jexl.script.UserScriptDeployment" short-alias="deployment"/>
+    </entity>
+
+    <entity entity-name="UserScriptRun" package="jexl.script" use="nontransactional" cache="never">
+        <description>One run of a user script, ad hoc or by a deployment: when, as whom, how it ended, what it read and
+            where it went. Kept for jexl_run_retention_days (default 30).</description>
+        <field name="scriptRunId" type="id" is-pk="true"/>
+        <field name="userScriptId" type="id"/>
+        <field name="scriptDeploymentId" type="id"><description>Empty for an ad hoc run.</description></field>
+        <field name="ownerUserId" type="id"/>
+        <field name="startDate" type="date-time"/>
+        <field name="endDate" type="date-time"/>
+        <field name="statusId" type="text-short">
+            <description>OK, NOTHING_TO_SEND, HELD, DISABLED, OWNER_LOST, READ_ERROR, READ_NOT_ALLOWED, READ_TOO_LARGE,
+                SCRIPT_ERROR, RESULT_INVALID, DELIVERY_PARTIAL, DELIVERY_FAILED or STUCK.</description></field>
+        <field name="errorKind" type="text-short"><description>For SCRIPT_ERROR: UNITS, TIME, MEMORY, NOT_ALLOWED, ERROR, ...</description></field>
+        <field name="units" type="number-integer"/>
+        <field name="elapsedMs" type="number-integer"/>
+        <field name="readCountsJson" type="text-medium"><description>Rows each input handed the script.</description></field>
+        <field name="deliveryOutcomesJson" type="text-long"/>
+        <field name="message" type="text-medium"/>
+
+        <index name="USCRIPT_RUN_DEPLOY">
+            <index-field name="scriptDeploymentId"/>
+            <index-field name="startDate"/>
+        </index>
+    </entity>
+
+    <entity entity-name="ScriptSource" package="jexl.script" use="configuration" cache="never">
+        <description>A read source an application adds for the read step: its name (used as an input's source) and a
+            service implementing moqui.jexl.ScriptServices.read#ScriptSource. The built-in source "entity" needs no row.</description>
+        <field name="sourceName" type="id" is-pk="true"/>
+        <field name="serviceName" type="text-medium" not-null="true"/>
+        <field name="description" type="text-medium"/>
     </entity>
 </entities>

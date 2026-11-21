@@ -38,8 +38,9 @@ class ScriptDeploymentSchedulerTests extends Specification {
 
     def cleanupSpec() {
         ec.artifactExecution.disableAuthz()
-        ec.entity.find('moqui.jexl.UserScriptDeployment').condition('scriptDeploymentId', 'like', 'USD_SCHED_%').deleteAll()
-        ec.entity.find('moqui.jexl.UserScript').condition('userScriptId', 'like', 'USS_SCHED_%').deleteAll()
+        ec.entity.find('jexl.script.UserScriptDeploymentDelivery').condition('scriptDeploymentId', 'like', 'USD_SCHED_%').deleteAll()
+        ec.entity.find('jexl.script.UserScriptDeployment').condition('scriptDeploymentId', 'like', 'USD_SCHED_%').deleteAll()
+        ec.entity.find('jexl.script.UserScript').condition('userScriptId', 'like', 'USS_SCHED_%').deleteAll()
         ec.entity.find('moqui.test.TestEntity').condition('testMedium', 'like', 'USD_SCHED_%').deleteAll()
         ec.artifactExecution.enableAuthz()
         ['script_hold_heap_percent', 'script_hold_cpu_percent'].each { System.clearProperty(it) }
@@ -72,7 +73,7 @@ class ScriptDeploymentSchedulerTests extends Specification {
         assert !ec.message.hasError(), ec.message.errorsString
         Timestamp now = Timestamp.from(Instant.parse('2026-06-02T10:00:00Z'))
         ec.artifactExecution.disableAuthz()
-        ec.entity.find('moqui.jexl.UserScriptDeployment').condition('scriptDeploymentId', 'USD_SCHED_1').one()
+        ec.entity.find('jexl.script.UserScriptDeployment').condition('scriptDeploymentId', 'USD_SCHED_1').one()
                 .set('nextRunDate', Timestamp.from(Instant.parse('2026-06-02T09:00:00Z'))).update()
         ec.artifactExecution.enableAuthz()
         Map first = null
@@ -83,7 +84,7 @@ class ScriptDeploymentSchedulerTests extends Specification {
         Thread pass = Thread.start { first = scheduler().runDue(now); second = scheduler().runDue(now) }
         pass.join(60_000)
         ec.artifactExecution.disableAuthz()
-        EntityValue deployment = ec.entity.find('moqui.jexl.UserScriptDeployment').condition('scriptDeploymentId', 'USD_SCHED_1')
+        EntityValue deployment = ec.entity.find('jexl.script.UserScriptDeployment').condition('scriptDeploymentId', 'USD_SCHED_1')
                 .useCache(false).one()
         List<EntityValue> deliveries = ec.entity.find('moqui.test.TestEntity').condition('testMedium', 'USD_SCHED_1').useCache(false).list()
         ec.artifactExecution.enableAuthz()
