@@ -396,6 +396,9 @@ along with this software (see the LICENSE.md file). If not, see
         <actions>
             <entity-find-one entity-name="jexl.script.UserScriptDeployment" value-field="deployment"/>
             <if condition="deployment == null"><return error="true" message="Script deployment ${scriptDeploymentId} not found."/></if>
+            <!-- a run reads as the owner: by hand, only the owner may run it (saving it makes the saver its owner) -->
+            <if condition="deployment.ownerUserId != ec.user.userId"><return error="true"
+                    message="Only its owner can run this deployment by hand; saving it makes you its owner."/></if>
 
             <set field="busyReason" from="org.moqui.jexl.ScriptLoadGate.busyReason(ec)"/>
             <if condition="busyReason"><return error="true" message="${org.moqui.jexl.ScriptLoadGate.busyMessage(busyReason)}"/></if>

@@ -31,6 +31,14 @@ class ScriptDeploymentSchedulerTests extends Specification {
 
     def setupSpec() {
         ec = Moqui.getExecutionContext()
+        // deliveries run as the owner with authz on: the test deliveries are granted like an application's own
+        ec.artifactExecution.disableAuthz()
+        ['deliver#ToTestEntity', 'deliver#Refused'].each { String svc ->
+            ec.entity.makeValue('moqui.security.ArtifactGroupMember').setAll([artifactGroupId: 'JEXL_SCRIPT_SCHEDULE',
+                    artifactName: "moqui.jexl.test.ScriptTestServices.${svc}".toString(), nameIsPattern: 'N', artifactTypeEnumId: 'AT_SERVICE',
+                    inheritAuthz: 'Y']).createOrUpdate()
+        }
+        ec.artifactExecution.enableAuthz()
         ec.user.loginUser("john.doe", "moqui")
         System.setProperty('script_hold_heap_percent', '101')
         System.setProperty('script_hold_cpu_percent', '101')

@@ -14,17 +14,14 @@
 package org.moqui.jexl.script
 
 import groovy.transform.CompileStatic
-import org.moqui.Moqui
 import org.moqui.context.ExecutionContext
 import org.moqui.entity.EntityValue
 import org.moqui.jexl.LaneResult
 import org.moqui.jexl.ScriptDeploymentRunner
-import org.moqui.jexl.ScriptLane
 import org.moqui.jexl.ScriptProfile
 import org.moqui.util.SystemBinding
 
 import java.sql.Timestamp
-import java.util.concurrent.Callable
 
 /**
  * Runs a script's read spec. Each input's source service is resolved and checked against the read#ScriptSource
@@ -68,17 +65,10 @@ class ReadStep {
         Map<String, Object> resolved = resolveSources(ec, spec)
         if (!resolved.ok) return resolved
         Map<String, String> services = (Map<String, String>) resolved.services
-        EntityValue owner = ownerUserId ? ec.entity.find('moqui.security.UserAccount').condition('userId', ownerUserId)
-                .disableAuthz().useCache(false).one() : null
-        if (owner == null) return failed('READ_NOT_ALLOWED', 'A read runs as its owner, and this run has none.')
-        String username = owner.getString('username')
         int maxRows = profile.maxReadRows
         long timeout = timeoutMs()
 
-        LaneResult lane = ScriptLane.run(ownerKey ?: ownerUserId, timeout, { ->
-            ExecutionContext own = Moqui.getExecutionContext()
-            try {
-                ((org.moqui.impl.context.UserFacadeImpl) own.user).internalLoginUser(username, false)
+        LaneResult lane = AsOwner.run(ec, ownerUserId, ownerKey, timeout) { ExecutionContext own ->
                 Map<String, Object> input = new LinkedHashMap<>()
                 Map<String, Long> counts = new LinkedHashMap<>()
                 for (ReadSpec.Input item : spec.inputs) {
@@ -100,15 +90,13 @@ class ReadStep {
                 }
                 input.put('run', [date: runDate.toInstant().toString(), timeZone: timeZone])
                 return [ok: true, input: input, readCounts: counts] as Map<String, Object>
-            } finally {
-                own.destroy()
-            }
-        } as Callable<Object>)
+        }
 
         switch (lane.status) {
             case 'OK': return (Map<String, Object>) lane.value
             case 'TIME': return failed('READ_ERROR', "The read took longer than ${timeout} ms and was stopped.")
             case 'FAILED': return failed('READ_ERROR', "The read failed: ${lane.error?.message}")
+            case 'NO_OWNER': return failed('READ_NOT_ALLOWED', 'A read runs as its owner, and this run has none.')
             default: return failed(lane.status, lane.message)
         }
     }

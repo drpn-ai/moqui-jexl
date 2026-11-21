@@ -37,6 +37,13 @@ along with this software (see the LICENSE.md file). If not, see
             <set field="message" value="Recorded."/>
         </actions>
     </service>
+    <service verb="deliver" noun="RecordUser">
+        <description>Records who the delivery ran as: testMedium = deployment id + '_USER', testLong = ec.user.userId.</description>
+        <implements service="moqui.jexl.ScriptServices.deliver#UserScriptDeploymentResult"/>
+        <actions>
+            <service-call name="create#moqui.test.TestEntity" in-map="[testMedium:scriptDeployment.scriptDeploymentId + '_USER', testLong:ec.user.userId]"/>
+        </actions>
+    </service>
     <service verb="deliver" noun="Refused">
         <implements service="moqui.jexl.ScriptServices.deliver#UserScriptDeploymentResult"/>
         <actions><return error="true" message="The endpoint refused it."/></actions>

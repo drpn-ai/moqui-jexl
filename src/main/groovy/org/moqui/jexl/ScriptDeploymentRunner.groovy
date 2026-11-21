@@ -151,7 +151,15 @@ class ScriptDeploymentRunner {
                 .condition('scriptDeploymentId', deployment.scriptDeploymentId).condition('isActive', 'Y')
                 .orderBy('deliverySeqId').useCache(false).disableAuthz().list()
         if (deliveries.isEmpty()) return base + [status: DELIVERY_FAILED, message: 'The deployment has no active delivery.', deliveries: []]
-        List<Map> outcomes = deliveries.collect { EntityValue d -> deliverOne(ec, deployment, d, normalized, files, scriptRunId) }
+        // NOTE: deliveries run as the owner, in a fresh context with authz on, like the read
+        LaneResult lane = org.moqui.jexl.script.AsOwner.run(ec, ownerUserId, ownerKey, deliveryTimeoutMs()) { ExecutionContext own ->
+            return deliveries.collect { EntityValue d -> deliverOne(own, deployment, d, normalized, files, scriptRunId) }
+        }
+        if (lane.status != 'OK') {
+            String why = lane.status == 'TIME' ? "the deliveries took longer than ${deliveryTimeoutMs()} ms" : (lane.message ?: lane.error?.message ?: lane.status)
+            return base + [status: DELIVERY_FAILED, message: "Not delivered: ${why}.".toString(), deliveries: []]
+        }
+        List<Map> outcomes = (List<Map>) lane.value
         int failed = outcomes.count { Map o -> o.outcome == 'FAILED' } as int
         String status = failed == 0 ? OK : (failed == outcomes.size() ? DELIVERY_FAILED : DELIVERY_PARTIAL)
         String message = outcomes.size() == 1 ? outcomes[0].message :
@@ -169,8 +177,13 @@ class ScriptDeploymentRunner {
         } else {
             Map parameters = delivery.parametersJson ? (Map) new JsonSlurper().parseText(delivery.getString('parametersJson')) : [:]
             Map deliveryMap = delivery.getMap() + [parameters: parameters]
-            Map out = ec.service.sync().name(service).parameters([scriptDeployment: deployment.getMap(), delivery: deliveryMap,
-                    scriptResult: normalized, files: files, scriptRunId: scriptRunId]).call()
+            Map out = null
+            try {
+                out = ec.service.sync().name(service).parameters([scriptDeployment: deployment.getMap(), delivery: deliveryMap,
+                        scriptResult: normalized, files: files, scriptRunId: scriptRunId]).call()
+            } catch (Throwable t) {
+                ec.message.addError(t.message ?: t.getClass().simpleName)
+            }
             if (ec.message.hasError()) {
                 outcome = [outcome: 'FAILED', message: ec.message.errorsString.trim()]
                 ec.message.clearErrors()
@@ -178,14 +191,25 @@ class ScriptDeploymentRunner {
                 outcome = [outcome: (out?.outcome ?: 'OK').toString(), message: (out?.message ?: 'Delivered.').toString()]
             }
         }
-        ec.transaction.runUseOrBegin(30, 'Error recording a script delivery outcome', {
-            EntityValue row = ec.entity.find('jexl.script.UserScriptDeploymentDelivery').condition([scriptDeploymentId: delivery.scriptDeploymentId,
-                    deliverySeqId: delivery.deliverySeqId]).useCache(false).disableAuthz().one()
-            row?.set('lastOutcome', outcome.outcome)
-            row?.set('lastMessage', fitField(outcome.message as String))
-            row?.update()
-        })
+        // NOTE: the outcome is the component's own record, not the owner's action
+        boolean wasDisabled = ec.artifactExecution.disableAuthz()
+        try {
+            ec.transaction.runUseOrBegin(30, 'Error recording a script delivery outcome', {
+                EntityValue row = ec.entity.find('jexl.script.UserScriptDeploymentDelivery').condition([scriptDeploymentId: delivery.scriptDeploymentId,
+                        deliverySeqId: delivery.deliverySeqId]).useCache(false).one()
+                row?.set('lastOutcome', outcome.outcome)
+                row?.set('lastMessage', fitField(outcome.message as String))
+                row?.update()
+            })
+        } finally {
+            if (!wasDisabled) ec.artifactExecution.enableAuthz()
+        }
         return outcome + [deliverySeqId: delivery.deliverySeqId, deliveryServiceName: service]
+    }
+
+    static long deliveryTimeoutMs() {
+        String raw = SystemBinding.getPropOrEnv('jexl_delivery_timeout_ms')
+        try { return raw ? Long.parseLong(raw.trim()) : 120_000L } catch (NumberFormatException ignored) { return 120_000L }
     }
 
     /** Why the owner may no longer run this deployment (disabled, missing, or not allowed to schedule), or null. */
@@ -198,16 +222,17 @@ class ScriptDeploymentRunner {
         return null
     }
 
-    /** Whether one of the user's current groups (or ALL_USERS) has a grant on JEXL_SCRIPT_SCHEDULE. */
+    /** Whether one of the user's current groups (or ALL_USERS) has a grant on JEXL_SCRIPT_SCHEDULE; any DENY wins. */
     static boolean maySchedule(ExecutionContext ec, String userId) {
         Timestamp now = ec.user.nowTimestamp
         List<String> groups = ec.entity.find('moqui.security.UserGroupMember').condition('userId', userId).useCache(false).disableAuthz().list()
                 .findAll { EntityValue m -> (m.fromDate == null || !((Timestamp) m.fromDate).after(now)) && (m.thruDate == null || ((Timestamp) m.thruDate).after(now)) }
                 .collect { EntityValue m -> m.getString('userGroupId') }
         groups.add('ALL_USERS')
-        return ec.entity.find('moqui.security.ArtifactAuthz').condition('artifactGroupId', SCHEDULE_GROUP)
-                .condition('userGroupId', EntityCondition.IN, groups).condition('authzTypeEnumId', EntityCondition.NOT_EQUAL, 'AUTHZT_DENY')
-                .useCache(false).disableAuthz().count() > 0
+        List<EntityValue> grants = ec.entity.find('moqui.security.ArtifactAuthz').condition('artifactGroupId', SCHEDULE_GROUP)
+                .condition('userGroupId', EntityCondition.IN, groups).useCache(false).disableAuthz().list()
+        if (grants.any { EntityValue g -> g.authzTypeEnumId == 'AUTHZT_DENY' }) return false
+        return grants.any { EntityValue g -> g.authzTypeEnumId in ['AUTHZT_ALLOW', 'AUTHZT_ALWAYS'] }
     }
 
     /** The lane owner key: what the service named by jexl_owner_key_service returns, else the owner's user id. */

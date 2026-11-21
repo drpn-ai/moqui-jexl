@@ -38,6 +38,14 @@ class UserScriptDeploymentTests extends Specification {
 
     def setupSpec() {
         ec = Moqui.getExecutionContext()
+        // deliveries run as the owner with authz on: the test deliveries are granted like an application's own
+        ec.artifactExecution.disableAuthz()
+        ['deliver#ToTestEntity', 'deliver#Refused'].each { String svc ->
+            ec.entity.makeValue('moqui.security.ArtifactGroupMember').setAll([artifactGroupId: 'JEXL_SCRIPT_SCHEDULE',
+                    artifactName: "moqui.jexl.test.ScriptTestServices.${svc}".toString(), nameIsPattern: 'N', artifactTypeEnumId: 'AT_SERVICE',
+                    inheritAuthz: 'Y']).createOrUpdate()
+        }
+        ec.artifactExecution.enableAuthz()
         ec.user.loginUser("john.doe", "moqui")
         // this machine's own heap and CPU must not hold the scripts under test
         System.setProperty('script_hold_heap_percent', '101')
@@ -403,5 +411,60 @@ class UserScriptDeploymentTests extends Specification {
         then:
         ec.entity.find('jexl.script.UserScriptRun').condition('scriptRunId', 'USR_TEST_OLD').useCache(false).one() == null
         ec.entity.find('jexl.script.UserScriptRun').condition('scriptRunId', 'USR_TEST_NEW').useCache(false).one() != null
+    }
+
+    def "aRunByHandIsOnlyForTheOwner"() {
+        given:
+        storeScript('USS_TEST_BACK', BACKORDERS)
+        storeDeployment('USD_TEST_HAND', 'USS_TEST_BACK', "${TEST_SVC}.deliver#ToTestEntity")
+
+        when:
+        ec.user.internalLoginUser('jexl.scheduler')
+        Map preview = call("${SVC}.run#UserScriptDeployment", [scriptDeploymentId: 'USD_TEST_HAND'])
+        String errors = ec.message.errorsString
+        ec.message.clearErrors()
+
+        then:
+        errors.contains('Only its owner')
+        preview.scriptResult == null
+        deliveries('USD_TEST_HAND').isEmpty()
+
+        cleanup:
+        ec.user.logoutUser()
+        ec.user.loginUser('john.doe', 'moqui')
+    }
+
+    def "aDenyWinsOverAnAllow"() {
+        given:
+        ec.entity.makeValue('moqui.security.ArtifactAuthz').setAll([artifactAuthzId: 'JT_DENY_SCHED', userGroupId: 'JEXL_TEST_SCHEDULERS',
+                artifactGroupId: 'JEXL_SCRIPT_SCHEDULE', authzTypeEnumId: 'AUTHZT_DENY', authzActionEnumId: 'AUTHZA_ALL']).createOrUpdate()
+
+        expect:
+        !ScriptDeploymentRunner.maySchedule(ec, 'JEXL_SCHEDULER')
+
+        cleanup:
+        ec.entity.find('moqui.security.ArtifactAuthz').condition('artifactAuthzId', 'JT_DENY_SCHED').deleteAll()
+    }
+
+    def "deliveriesRunAsTheOwner"() {
+        given:
+        ec.entity.makeValue('moqui.security.ArtifactGroupMember').setAll([artifactGroupId: 'JEXL_SCRIPT_SCHEDULE',
+                artifactName: "${TEST_SVC}.deliver#RecordUser".toString(), nameIsPattern: 'N', artifactTypeEnumId: 'AT_SERVICE', inheritAuthz: 'Y']).createOrUpdate()
+        storeScript('USS_TEST_BACK', BACKORDERS)
+        storeDeployment('USD_TEST_ASOWNER', 'USS_TEST_BACK', "${TEST_SVC}.deliver#RecordUser")
+        deployment('USD_TEST_ASOWNER').set('ownerUserId', 'JEXL_SCHEDULER').update()
+        dueAt('USD_TEST_ASOWNER', at('2037-01-01T09:00:00Z'))
+
+        when:
+        call("${SVC}.run#DueUserScriptDeployments", [nowTimestamp: at('2037-01-01T09:01:00Z')])
+
+        then:
+        deployment('USD_TEST_ASOWNER').lastRunStatus == 'OK'
+        deliveries('USD_TEST_ASOWNER_USER')*.testLong == ['JEXL_SCHEDULER']
+
+        cleanup:
+        ec.entity.find('moqui.test.TestEntity').condition('testMedium', 'USD_TEST_ASOWNER_USER').deleteAll()
+        ec.entity.find('moqui.security.ArtifactGroupMember').condition([artifactGroupId: 'JEXL_SCRIPT_SCHEDULE',
+                artifactName: "${TEST_SVC}.deliver#RecordUser".toString()]).deleteAll()
     }
 }
