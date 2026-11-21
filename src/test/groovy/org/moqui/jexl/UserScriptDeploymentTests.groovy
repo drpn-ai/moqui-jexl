@@ -248,4 +248,22 @@ class UserScriptDeploymentTests extends Specification {
         expired.nextRunDate == at('2032-01-02T09:00:00Z')
         deliveries('USD_TEST_BUSY').isEmpty()
     }
+
+    def "theToggleServiceStopsAndRestartsScripts"() {
+        when:
+        ec.service.sync().name("${SVC}.set#UserScriptsEnabled").parameters([enabled: false]).call()
+        Map off = ec.service.sync().name("${SVC}.run#UserScript").parameters([scriptBody: '1 + 1', inputJson: '{}']).call()
+        Map status = ec.service.sync().name("${SVC}.get#UserScriptLaneStatus").call()
+        ec.service.sync().name("${SVC}.set#UserScriptsEnabled").parameters([enabled: true]).call()
+        Map on = ec.service.sync().name("${SVC}.run#UserScript").parameters([scriptBody: '1 + 1', inputJson: '{}']).call()
+
+        then:
+        !off.ok
+        off.error.kind == 'DISABLED'
+        status.enabled == false
+        status.stuckCount == 0
+        on.ok
+        on.scriptResult == 2
+    }
 }
+

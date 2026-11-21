@@ -190,6 +190,44 @@ class ScriptLaneTests extends Specification {
         ScriptLane.stuckCount() == 0
     }
 
+    def "aNullOwnerDoesNotSerialize"() {
+        given:
+        CountDownLatch release = new CountDownLatch(1)
+        CountDownLatch firstStarted = new CountDownLatch(1)
+
+        when:
+        LaneResultHolder first = async(null, 5_000L, { firstStarted.countDown(); release.await(); 1 } as Callable<Object>)
+        firstStarted.await(2, TimeUnit.SECONDS)
+        LaneResult second = ScriptLane.run(null, 1_000L, { 2 } as Callable<Object>)
+        release.countDown()
+        first.thread.join()
+
+        then:
+        second.status == 'OK'
+        first.result.status == 'OK'
+    }
+
+    def "aRunCancelledBeforeItStartsLeaksNothing"() {
+        given:
+        System.setProperty('jexl_lane_grace_ms', '50')
+        ScriptLane.resetForTests()
+        AtomicBoolean ran = new AtomicBoolean(false)
+        ScriptLane.beforeStart = { -> Thread.sleep(400) }
+
+        when:
+        LaneResult late = ScriptLane.run('A', 50L, { ran.set(true); 1 } as Callable<Object>)
+        ScriptLane.beforeStart = null
+        Thread.sleep(500)
+        LaneResult next = ScriptLane.run('A', 1_000L, { 2 } as Callable<Object>)
+
+        then:
+        late.status == 'TIME'
+        !late.stuck
+        ScriptLane.stuckCount() == 0
+        !ran.get()
+        next.status == 'OK'
+    }
+
     static class LaneResultHolder {
         Thread thread
         volatile LaneResult result

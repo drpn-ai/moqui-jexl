@@ -532,4 +532,26 @@ class UserScriptSupervisorTests extends Specification {
         }
         assertEquals([], offenders, 'jexl3 may be referenced only from ' + sandbox)
     }
+
+    def "aScriptThatAllocatesTooMuchStopsWithMemory"() {
+        given:
+        System.setProperty('jexl_profile_SCRIPT_maxAllocatedBytes', '100000')
+
+        when:
+        Map out = ScriptSupervisor.evaluate('SCRIPT', "var m = {:}; for (var i : 1..3000) { m['k' + i] = 'v' + i; } size(m)", [:])
+
+        then:
+        !out.ok
+        out.error.kind == 'MEMORY'
+        out.error.message.contains('allocated')
+
+        cleanup:
+        System.clearProperty('jexl_profile_SCRIPT_maxAllocatedBytes')
+    }
+
+    def "aSmallScriptIsUnaffectedByTheMemoryCheck"() {
+        expect:
+        ScriptSupervisor.evaluate('SCRIPT', 'var s = 0; for (var i : 1..1000) { s = s + i; } s', [:]).result == 500500
+    }
 }
+

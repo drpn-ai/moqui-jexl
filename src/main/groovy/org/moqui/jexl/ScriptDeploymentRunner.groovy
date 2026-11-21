@@ -94,7 +94,8 @@ class ScriptDeploymentRunner {
         Map<String, Object> prepared = readInput(ec, deployment, script)
         if (prepared.status) return prepared
 
-        Map<String, Object> run = ScriptSupervisor.evaluate(script.scriptProfile, script.scriptBody as String, prepared.input)
+        Map<String, Object> run = ScriptSupervisor.evaluate(script.scriptProfile, script.scriptBody as String, prepared.input,
+                "deployment ${deployment.scriptDeploymentId}".toString())
         Map<String, Object> base = [run: run, inputSummary: prepared.inputSummary] as Map<String, Object>
         if (!run.ok) {
             Map error = run.error as Map

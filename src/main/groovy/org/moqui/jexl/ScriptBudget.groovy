@@ -15,6 +15,8 @@ package org.moqui.jexl
 
 import groovy.transform.CompileStatic
 
+import java.lang.management.ManagementFactory
+
 /**
  * What one evaluation may still spend, and what it logged. Held in a ThreadLocal while the evaluation runs, because
  * the engine and its arithmetic are shared by every script.
@@ -29,6 +31,18 @@ class ScriptBudget {
     static final int MAX_LOG_LINE_CHARS = 500
 
     private static final ThreadLocal<ScriptBudget> CURRENT = new ThreadLocal<>()
+    /** how often (in charges) the thread's allocated bytes are read */
+    static final int ALLOCATION_SAMPLE_EVERY = 256
+    private static final com.sun.management.ThreadMXBean THREADS = threadBean()
+
+    private static com.sun.management.ThreadMXBean threadBean() {
+        def bean = ManagementFactory.getThreadMXBean()
+        if (!(bean instanceof com.sun.management.ThreadMXBean)) return null
+        com.sun.management.ThreadMXBean sun = (com.sun.management.ThreadMXBean) bean
+        if (!sun.isThreadAllocatedMemorySupported()) return null
+        if (!sun.isThreadAllocatedMemoryEnabled()) sun.setThreadAllocatedMemoryEnabled(true)
+        return sun
+    }
 
     /** A script hit one of its limits; kind is UNITS, TIME, MEMORY, NUMBER, ACCESS or OUTPUT. */
     static class LimitReached extends ArithmeticException {
@@ -45,6 +59,9 @@ class ScriptBudget {
     final int maxCollectionSize
     /** all the text one evaluation may build: 64 of its longest text */
     final long maxTotalChars
+    /** bytes the evaluation's thread may allocate; 0 = not checked */
+    final long maxAllocatedBytes
+    long allocatedAtOpen = -1L
     long units = 0L
     long charsMade = 0L
     final List<String> logs = []
@@ -52,16 +69,21 @@ class ScriptBudget {
     String missingField
     List<String> recordFields = []
 
-    ScriptBudget(long unitLimit, int maxStringChars, int maxCollectionSize) {
+    ScriptBudget(long unitLimit, int maxStringChars, int maxCollectionSize, long maxAllocatedBytes = 0L) {
         this.unitLimit = unitLimit
         this.maxStringChars = maxStringChars
         this.maxCollectionSize = maxCollectionSize
         this.maxTotalChars = maxStringChars * 64L
+        this.maxAllocatedBytes = maxAllocatedBytes
     }
 
     static ScriptBudget current() { CURRENT.get() }
 
-    static void open(ScriptBudget budget) { CURRENT.set(budget) }
+    /** Opens the budget on the evaluating thread; the allocation count starts here. */
+    static void open(ScriptBudget budget) {
+        if (budget.maxAllocatedBytes > 0 && THREADS != null) budget.allocatedAtOpen = THREADS.getCurrentThreadAllocatedBytes()
+        CURRENT.set(budget)
+    }
 
     static void close() { CURRENT.remove() }
 
@@ -74,6 +96,12 @@ class ScriptBudget {
         budget.units += cost
         if (budget.units > budget.unitLimit) throw new LimitReached('UNITS', "The script used more than ${budget.unitLimit} units of work.".toString())
         if (Thread.currentThread().isInterrupted()) throw new LimitReached('TIME', 'The script ran out of time.')
+        if (budget.allocatedAtOpen >= 0 && budget.units % ALLOCATION_SAMPLE_EVERY < cost) {
+            long allocated = THREADS.getCurrentThreadAllocatedBytes() - budget.allocatedAtOpen
+            if (allocated > budget.maxAllocatedBytes) {
+                throw new LimitReached('MEMORY', "The script allocated more than ${budget.maxAllocatedBytes} bytes of memory.".toString())
+            }
+        }
     }
 
     /** Refuses text of this length before it is built, so the cap holds at the peak allocation. */

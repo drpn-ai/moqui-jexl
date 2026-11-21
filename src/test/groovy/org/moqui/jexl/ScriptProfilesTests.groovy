@@ -31,7 +31,8 @@ class ScriptProfilesTests extends Specification {
         ScriptProfiles.get('EXPRESSION').timeoutMs == 250L
         ScriptProfiles.get('EXPRESSION').units == 100_000L
         !ScriptProfiles.get('EXPRESSION').statements
-        ScriptProfiles.get('SCRIPT').maxAllocatedBytes == 64L * 1024 * 1024
+        ScriptProfiles.get('SCRIPT').maxAllocatedBytes == 2_000_000L * 512
+        ScriptProfiles.get('EXPRESSION').maxAllocatedBytes == 100_000L * 512
     }
 
     def "anAppProfileStartsFromScriptAndOverrides"() {
@@ -46,6 +47,7 @@ class ScriptProfilesTests extends Specification {
         ScriptProfiles.get('QUERY').maxReadRows == 20_000
         ScriptProfiles.get('QUERY').timeoutMs == 2_000L
         ScriptProfiles.get('QUERY').statements
+        ScriptProfiles.get('QUERY').maxAllocatedBytes == 5_000_000L * 512
     }
 
     def "aBuiltInCanBeTunedBySetting"() {

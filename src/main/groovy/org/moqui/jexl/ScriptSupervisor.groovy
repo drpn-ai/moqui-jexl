@@ -157,7 +157,7 @@ class ScriptSupervisor {
 
         // NOTE: the engine caches the parse validate just did
         JexlScript script = engineFor(limits).createScript(new JexlInfo('script', 1, 1), body)
-        ScriptBudget budget = new ScriptBudget(limits.units, limits.maxStringChars, limits.maxCollectionSize)
+        ScriptBudget budget = new ScriptBudget(limits.units, limits.maxStringChars, limits.maxCollectionSize, limits.maxAllocatedBytes)
         long started = System.nanoTime()
         LaneResult lane = ScriptLane.run(ownerKey, limits.timeoutMs, { ->
                 ScriptBudget.open(budget)

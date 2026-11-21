@@ -30,12 +30,14 @@ class ScriptProfiles {
 
     static final String EXPRESSION = 'EXPRESSION'
     static final String SCRIPT = 'SCRIPT'
+    /** the memory check's default: bytes a run may allocate per unit of its work budget */
+    static final long BYTES_PER_UNIT = 512L
 
     private static final Map<String, Object> SCRIPT_LIMITS = [
             maxSourceChars    : 64_000, units: 2_000_000L, timeoutMs: 2_000L, maxStringChars: 65_536,
             maxCollectionSize : 10_000, maxInputValues: 500_000, maxInputJsonChars: 2_000_000,
             maxOutputJsonChars: 65_536, maxOutputNodes: 20_000, maxDepth: 32, maxReadRows: 2_000,
-            maxAllocatedBytes : 64L * 1024 * 1024, statements: true,
+            maxAllocatedBytes : 0L, statements: true,
     ].asImmutable() as Map<String, Object>
     private static final Map<String, Map<String, Object>> BUILT_IN = [
             (SCRIPT)    : SCRIPT_LIMITS,
@@ -72,6 +74,9 @@ class ScriptProfiles {
                 values[field] = parsed
             }
         }
+        // NOTE: JEXL allocates about 300-400 bytes per unit in real scripts (garbage included), so unless a setting names
+        // it, the memory check scales with the work budget: 512 bytes per unit
+        if ((values.maxAllocatedBytes as long) <= 0L) values.maxAllocatedBytes = (values.units as long) * BYTES_PER_UNIT
         return new ScriptProfile(clean, values)
     }
 

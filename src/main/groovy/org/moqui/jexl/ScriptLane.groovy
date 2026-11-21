@@ -55,6 +55,9 @@ class ScriptLane {
     /** Whether the calling thread is inside a transaction; replaced in tests. */
     static Closure<Boolean> inTransaction = DEFAULT_IN_TRANSACTION
 
+    /** Test seam: runs on the lane thread before the work is claimed (to simulate a thread that starts late). */
+    static Closure beforeStart = null
+
     private static volatile Boolean runtimeEnabled = null
     private static final AtomicInteger THREAD_COUNT = new AtomicInteger()
     private static final ExecutorService EXECUTOR = Executors.newCachedThreadPool({ Runnable task ->
@@ -88,6 +91,7 @@ class ScriptLane {
 
     static void resetForTests() {
         inTransaction = DEFAULT_IN_TRANSACTION
+        beforeStart = null
         runtimeEnabled = null
         threadSlots = new Semaphore(intSetting('jexl_lane_threads', 2))
         queueCap = intSetting('jexl_lane_queue', 4)
@@ -103,6 +107,8 @@ class ScriptLane {
     /**
      * Runs work on a lane thread and waits for it, at most timeoutMs. userCode false (a .jexl file that ships with the
      * application) skips the transaction check and the kill switch; the owner slot, queue and stuck handling still apply.
+     * A null ownerKey takes no owner slot (only the thread and queue caps apply), so callers without an owner never
+     * share one slot.
      */
     static LaneResult run(String ownerKey, long timeoutMs, Callable<Object> work, boolean userCode) {
         if (userCode && !enabled()) return LaneResult.of('DISABLED', 'Scripts are switched off on this server.')
@@ -119,16 +125,16 @@ class ScriptLane {
         }
 
         String key = ownerKey ?: '-'
-        Semaphore owner = OWNERS.computeIfAbsent(key, { String k -> new Semaphore(1) })
+        Semaphore owner = ownerKey ? OWNERS.computeIfAbsent(ownerKey, { String k -> new Semaphore(1) }) : null
         Semaphore threads = threadSlots
         long waitMs = intSetting('jexl_lane_wait_ms', 30_000)
         long deadline = System.currentTimeMillis() + waitMs
         try {
-            if (!owner.tryAcquire(waitMs, TimeUnit.MILLISECONDS)) {
+            if (owner != null && !owner.tryAcquire(waitMs, TimeUnit.MILLISECONDS)) {
                 return LaneResult.of('HELD', "Another script of the same owner ran past ${waitMs} ms; this one was held.".toString())
             }
             if (!threads.tryAcquire(Math.max(0L, deadline - System.currentTimeMillis()), TimeUnit.MILLISECONDS)) {
-                owner.release()
+                owner?.release()
                 return LaneResult.of('HELD', "Every script thread was busy for ${waitMs} ms; this run was held.".toString())
             }
         } catch (InterruptedException e) {
@@ -140,6 +146,13 @@ class ScriptLane {
 
         RunState state = new RunState()
         Future<Object> future = EXECUTOR.submit({ ->
+            Closure hook = beforeStart
+            if (hook != null) { try { hook.call() } catch (InterruptedException ignored) { Thread.interrupted() } }
+            synchronized (state) {
+                // NOTE: the caller gave up before this thread started and already returned the slots
+                if (state.abandoned) return null
+                state.started = true
+            }
             RUNNING.incrementAndGet()
             try {
                 return work.call()
@@ -153,7 +166,7 @@ class ScriptLane {
                     } else {
                         threads.release()
                     }
-                    owner.release()
+                    owner?.release()
                 }
                 state.done.countDown()
             }
@@ -163,6 +176,15 @@ class ScriptLane {
             return new LaneResult('OK', future.get(timeoutMs, TimeUnit.MILLISECONDS), null, null, false)
         } catch (TimeoutException ignored) {
             future.cancel(true)
+            synchronized (state) {
+                if (!state.started) {
+                    // NOTE: never started: nothing will run its cleanup, so the slots go back here and it is not stuck
+                    state.abandoned = true
+                    threads.release()
+                    owner?.release()
+                    return new LaneResult('TIME', null, null, "The script did not start within ${timeoutMs} ms.".toString(), false)
+                }
+            }
             boolean ended
             try {
                 ended = state.done.await(intSetting('jexl_lane_grace_ms', 1_000), TimeUnit.MILLISECONDS)
@@ -188,6 +210,13 @@ class ScriptLane {
             return new LaneResult('FAILED', null, e.cause ?: e, null, false)
         } catch (InterruptedException e) {
             future.cancel(true)
+            synchronized (state) {
+                if (!state.started) {
+                    state.abandoned = true
+                    threads.release()
+                    owner?.release()
+                }
+            }
             Thread.currentThread().interrupt()
             return new LaneResult('FAILED', null, e, 'Interrupted while waiting for the script.', false)
         }
@@ -205,6 +234,8 @@ class ScriptLane {
     }
 
     private static class RunState {
+        boolean started = false
+        boolean abandoned = false
         boolean finished = false
         boolean stuck = false
         final CountDownLatch done = new CountDownLatch(1)
