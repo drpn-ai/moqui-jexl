@@ -54,6 +54,20 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters><parameter name="total" type="BigDecimal"/><parameter name="lineCount" type="Integer"/></out-parameters>
     </service>
 
+    <!-- read sources for ReadStepTests -->
+    <service verb="read" noun="FixedSource">
+        <description>Three fixed lines (qty 1, 2, 3), filtered by the input's where; echoUser: one row naming the
+            logged-in user; sleepMs: sleeps first.</description>
+        <implements service="moqui.jexl.ScriptServices.read#ScriptSource"/>
+        <actions><script><![CDATA[
+            if (input.sleepMs) Thread.sleep(input.sleepMs as long)
+            if (input.echoUser) { rows = [[userId: ec.user.userId]]; rowCount = 1L; return }
+            List all = [[line: 'L1', qty: 1], [line: 'L2', qty: 2], [line: 'L3', qty: 3]]
+            rows = input.where ? all.findAll { org.moqui.jexl.script.ReadConditions.matches(input.where, it) } : all
+            rowCount = (long) rows.size()
+        ]]></script></actions>
+    </service>
+
     <service verb="check" noun="QueueFull">
         <out-parameters><parameter name="busyReason"/></out-parameters>
         <actions><set field="busyReason" value="the order queue is full"/></actions>

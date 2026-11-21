@@ -82,6 +82,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="scriptProfile" default-value="SCRIPT"/>
             <parameter name="scriptBody" required="true" allow-html="any"/>
             <parameter name="sampleInputJson" allow-html="any"/>
+            <parameter name="readSpecJson" allow-html="any"><description>The read step (org.moqui.jexl.script.ReadSpec); its sources must exist and implement read#ScriptSource.</description></parameter>
             <parameter name="isActive" default-value="Y"/>
         </in-parameters>
         <out-parameters>
@@ -92,6 +93,14 @@ along with this software (see the LICENSE.md file). If not, see
             <set field="checked" from="org.moqui.jexl.ScriptSupervisor.validate(scriptProfile, scriptBody)"/>
             <if condition="!checked.ok"><return error="true"
                     message="${checked.error.line ? 'Line ' + checked.error.line + ': ' : ''}${checked.error.message}"/></if>
+            <if condition="readSpecJson"><script><![CDATA[
+                try {
+                    Map sources = org.moqui.jexl.script.ReadStep.resolveSources(ec, org.moqui.jexl.script.ReadSpec.parse(readSpecJson))
+                    if (!sources.ok) ec.message.addError(sources.message as String)
+                } catch (org.moqui.jexl.script.ReadSpec.Invalid e) {
+                    ec.message.addError("Read spec: ${e.message}".toString())
+                }
+            ]]></script><check-errors/></if>
 
             <set field="busyReason" from="org.moqui.jexl.ScriptLoadGate.busyReason(ec)"/>
             <if condition="busyReason"><then>
@@ -106,7 +115,8 @@ along with this software (see the LICENSE.md file). If not, see
 
             <service-call name="store#jexl.script.UserScript" out-map="context"
                     in-map="[userScriptId:userScriptId, scriptName:scriptName, description:description, scriptProfile:checked.profile,
-                        scriptBody:scriptBody, sampleInputJson:sampleInputJson, isActive:isActive]"/>
+                        scriptBody:scriptBody, sampleInputJson:sampleInputJson, readSpecJson:readSpecJson ?: null,
+                        ownerUserId:ec.user.userId, isActive:isActive]"/>
         </actions>
     </service>
 
@@ -120,10 +130,13 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="scriptBody" allow-html="any"/>
             <parameter name="input" type="Object"><description>Any JSON-shaped value; copied before the script sees it.</description></parameter>
             <parameter name="inputJson" allow-html="any"/>
+            <parameter name="readSpecJson" allow-html="any"><description>A read step to run first, as the logged-in user; a saved script's own when not given.</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="ok" type="Boolean"/>
             <parameter name="scriptResult" type="Object"><description>What the script returned (named so, since result is taken in XML actions).</description></parameter>
+            <parameter name="normalizedResult" type="Map"><description>The result contract: {summary, files, data}, {nothing: true} or {invalid: true, message}.</description></parameter>
+            <parameter name="readCounts" type="Map"><description>Rows each input of the read handed the script.</description></parameter>
             <parameter name="error" type="Map"><description>{kind, message, line, column} when not ok</description></parameter>
             <parameter name="units" type="Long"/>
             <parameter name="elapsedMs" type="Long"/>
@@ -136,6 +149,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <set field="scriptProfile" from="userScript.scriptProfile"/>
                 <set field="scriptBody" from="userScript.scriptBody"/>
                 <if condition="input == null &amp;&amp; inputJson == null"><set field="inputJson" from="userScript.sampleInputJson"/></if>
+                <if condition="!readSpecJson"><set field="readSpecJson" from="userScript.readSpecJson"/></if>
             </if>
             <if condition="!scriptBody"><return error="true" message="Give a userScriptId or a scriptBody."/></if>
 
@@ -145,6 +159,20 @@ along with this software (see the LICENSE.md file). If not, see
                 <set field="error" from="[kind:'BUSY', message:org.moqui.jexl.ScriptLoadGate.busyMessage(busyReason)]"/>
                 <return/>
             </if>
+
+            <if condition="readSpecJson"><script><![CDATA[
+                org.moqui.jexl.script.ReadSpec spec = null
+                try {
+                    spec = org.moqui.jexl.script.ReadSpec.parse(readSpecJson)
+                } catch (org.moqui.jexl.script.ReadSpec.Invalid e) {
+                    ok = false; error = [kind: 'READ_ERROR', message: "Read spec: ${e.message}".toString()]; return
+                }
+                Map read = org.moqui.jexl.script.ReadStep.run(ec, spec, ec.user.userId, ec.user.userId, ec.user.nowTimestamp,
+                        ec.user.timeZone?.ID, org.moqui.jexl.ScriptProfiles.get(scriptProfile))
+                if (!read.ok) { ok = false; error = [kind: read.status, message: read.message]; return }
+                input = read.input
+                readCounts = read.readCounts
+            ]]></script><if condition="ok == false"><return/></if></if>
 
             <if condition="input == null"><script>
                 try {
@@ -157,6 +185,7 @@ along with this software (see the LICENSE.md file). If not, see
             <set field="run" from="org.moqui.jexl.ScriptSupervisor.evaluate(scriptProfile, scriptBody, input, ec.user.userId ?: 'anonymous')"/>
             <set field="ok" from="run.ok"/>
             <set field="scriptResult" from="run.result"/>
+            <if condition="run.ok"><set field="normalizedResult" from="org.moqui.jexl.script.ScriptResult.normalize(run.result, org.moqui.jexl.ScriptProfiles.get(scriptProfile))"/></if>
             <set field="error" from="run.error"/>
             <set field="units" from="run.units"/>
             <set field="elapsedMs" from="run.elapsedMs"/>
@@ -185,6 +214,21 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="rowCount" type="Long"/>
             <parameter name="error" type="Map"/>
         </out-parameters>
+    </service>
+    <service verb="store" noun="ScriptSource">
+        <description>Registers (or changes) a read source: its name, used as an input's source in a read spec, and a
+            service implementing read#ScriptSource. "entity" is built in and cannot be registered.</description>
+        <in-parameters>
+            <parameter name="sourceName" required="true"/>
+            <parameter name="serviceName" required="true"/>
+            <parameter name="description"/>
+        </in-parameters>
+        <actions>
+            <if condition="sourceName == 'entity'"><return error="true" message="The entity source is built in."/></if>
+            <if condition="!org.moqui.jexl.ScriptDeploymentRunner.implementsInterface(ec, serviceName, 'moqui.jexl.ScriptServices.read#ScriptSource')">
+                <return error="true" message="${serviceName} does not implement moqui.jexl.ScriptServices.read#ScriptSource."/></if>
+            <service-call name="store#jexl.script.ScriptSource" in-map="[sourceName:sourceName, serviceName:serviceName, description:description]"/>
+        </actions>
     </service>
     <service verb="read" noun="EntityScriptSource">
         <description>The built-in entity source (org.moqui.jexl.script.EntitySource): only entities listed in the
