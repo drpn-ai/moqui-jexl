@@ -175,4 +175,23 @@ class ReadStepTests extends Specification {
                 nameIsPattern: 'N', artifactTypeEnumId: 'AT_SERVICE', inheritAuthz: 'N']).createOrUpdate()
         ec.artifactExecution.enableAuthz()
     }
+
+    def "aReadThatIgnoresItsStopIsStuck"() {
+        given:
+        System.setProperty('jexl_read_timeout_ms', '200')
+        System.setProperty('jexl_lane_grace_ms', '50')
+
+        when:
+        Map out = run([inputs: [[name: 'spin', source: 'fixed', fields: ['line'], spinMs: 1500]]], 'input.spin')
+
+        then:
+        !out.ok
+        out.error.kind == 'STUCK'
+
+        cleanup:
+        long until = System.currentTimeMillis() + 5_000L
+        while (ScriptLane.stuckCount() > 0 && System.currentTimeMillis() < until) Thread.sleep(20)
+        System.clearProperty('jexl_read_timeout_ms')
+        System.clearProperty('jexl_lane_grace_ms')
+    }
 }

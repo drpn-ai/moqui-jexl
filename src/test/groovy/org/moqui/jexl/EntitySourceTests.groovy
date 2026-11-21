@@ -173,4 +173,29 @@ class EntitySourceTests extends Specification {
         out.error.kind == 'READ_ERROR'
         out.error.message.contains('secret')
     }
+
+    def "aGroupedReadStopsWhenInterrupted"() {
+        when:
+        org.moqui.jexl.script.EntitySource.stopRequested = { -> true }
+        Map out
+        try {
+            out = org.moqui.jexl.script.EntitySource.read(ec, [name: 't', source: 'entity', entityName: 'jexl.test.ReadThing',
+                    groupBy: ['statusId'], measures: [[fn: 'count', as: 'n']]], RUN, 'UTC', 100)
+        } finally {
+            org.moqui.jexl.script.EntitySource.resetForTests()
+        }
+
+        then:
+        out.error.kind == 'READ_ERROR'
+        out.error.message.contains('stopped')
+    }
+
+    def "anAuthorizeSkipViewEntityIsRefused"() {
+        when:
+        Map out = read([name: 'o', source: 'entity', entityName: 'jexl.test.OpenThing', fields: ['openId']])
+
+        then:
+        out.error.kind == 'READ_NOT_ALLOWED'
+        out.error.message.contains('authorize-skip')
+    }
 }

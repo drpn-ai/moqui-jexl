@@ -21,6 +21,9 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="qty" type="number-integer"/>
         <field name="madeDate" type="date-time"/>
     </entity>
+    <entity entity-name="OpenThing" package="jexl.test" use="transactional" authorize-skip="view">
+        <field name="openId" type="id" is-pk="true"/>
+    </entity>
     <entity entity-name="OtherThing" package="jexl.test" use="transactional">
         <field name="otherId" type="id" is-pk="true"/>
     </entity>

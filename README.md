@@ -52,20 +52,29 @@ What a read can see:
   organization, by owner, ...).
 - **Never `moqui.*`.** Moqui never applies entity filters to `moqui.*` entities, and they hold security data, so the
   entity source refuses them, including by a short name and inside a view.
+- **Never an entity no grant would govern.** An entity marked `authorize-skip="view"` is refused, and so is every read
+  while entity authorization is switched off (`AT_ENTITY authz-enabled="false"`): in both cases no grant or filter
+  would apply.
 - **Read sources are granted too.** The owner needs authorization on each source service (`JEXL_SOURCES`; the built-in
   entity source is in it).
 
 Who runs what:
 
-- A scheduled run reads, runs and delivers as its **owner**: whoever last turned it on, changed its deliveries, or
-  changed its script. At every run the owner must still be enabled and allowed to schedule (a grant on
-  `JEXL_SCRIPT_SCHEDULE`, where any DENY wins); otherwise the deployment switches itself off (`OWNER_LOST`).
+- A scheduled run reads, runs and delivers as its **owner**: whoever last stored it or changed its script. The owner
+  is acted as directly, never logged in through the realm, so runs never touch the owner's login state. At every run
+  the owner must still exist, not be terminated or disabled, and be allowed to schedule (a grant on
+  `JEXL_SCRIPT_SCHEDULE`, where any DENY wins); otherwise the deployment switches itself off (`OWNER_LOST`). A
+  temporary lockout after failed logins only holds that run (`HELD`).
+- Storing a deployment always needs `JEXL_SCRIPT_SCHEDULE`, whichever screen or service it comes through.
 - Editing a script that someone else's active deployment runs makes you its owner, so it needs `JEXL_SCRIPT_SCHEDULE`.
 - Only the owner can run a deployment by hand.
 - Every service a stored row can name (read source, input service, delivery) must implement the matching interface,
   checked when stored and again at every run.
-- Email uses only templates listed in `jexl_email_templates`. A notification goes only to the owner or a group the
-  owner is an explicit member of.
+- Email uses only templates listed in `jexl_email_templates`, to **any address** the delivery names: limit recipients
+  in your own delivery if you need to. A notification goes only to the owner or a group the owner is an explicit member
+  of.
+- `.jexl` files your application ships are application code: they run in the sandbox with their time limit, but never
+  wait on user scripts (no queue, no thread cap, no stuck pause, no kill switch).
 
 ## Read spec
 

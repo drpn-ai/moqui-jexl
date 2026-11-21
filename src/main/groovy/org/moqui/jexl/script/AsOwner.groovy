@@ -17,6 +17,9 @@ import groovy.transform.CompileStatic
 import org.moqui.Moqui
 import org.moqui.context.ExecutionContext
 import org.moqui.entity.EntityValue
+import org.apache.shiro.subject.SimplePrincipalCollection
+import org.apache.shiro.subject.Subject
+import org.moqui.impl.context.ExecutionContextFactoryImpl
 import org.moqui.impl.context.UserFacadeImpl
 import org.moqui.jexl.LaneResult
 import org.moqui.jexl.ScriptLane
@@ -25,8 +28,10 @@ import java.util.concurrent.Callable
 
 /**
  * Runs work as a script's owner: on a lane thread (the owner's slot, a time cap), in a fresh ExecutionContext with an
- * empty artifact stack, logged in as the owner, with authorization on, so nothing the caller is allowed (an
- * anonymous-all scheduler service, an inheriting grant) carries over. The context is destroyed afterwards.
+ * empty artifact stack, acting as the owner, with authorization on, so nothing the caller is allowed (an anonymous-all
+ * scheduler service, an inheriting grant) carries over. The owner is pushed as an already-authenticated Subject, never
+ * through the login realm, so a run never touches the owner's login state (failed-login count, logged-out flag) and
+ * the caller (ownerProblem) decides beforehand whether the owner may still run. The context is destroyed afterwards.
  */
 @CompileStatic
 class AsOwner {
@@ -39,7 +44,12 @@ class AsOwner {
         return ScriptLane.run(ownerKey ?: ownerUserId, timeoutMs, { ->
             ExecutionContext own = Moqui.getExecutionContext()
             try {
-                ((UserFacadeImpl) own.user).internalLoginUser(username, false)
+                ExecutionContextFactoryImpl ecfi = (ExecutionContextFactoryImpl) own.factory
+                Subject subject = new Subject.Builder(ecfi.getSecurityManager())
+                        .principals(new SimplePrincipalCollection(username, 'moquiRealm')).authenticated(true).buildSubject()
+                if (!((UserFacadeImpl) own.user).internalLoginSubject(subject) || own.user.userId != ownerUserId) {
+                    throw new IllegalStateException("Could not act as the owner ${username}.".toString())
+                }
                 return work.call(own)
             } finally {
                 own.destroy()

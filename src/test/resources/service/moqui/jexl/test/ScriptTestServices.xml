@@ -44,6 +44,14 @@ along with this software (see the LICENSE.md file). If not, see
             <service-call name="create#moqui.test.TestEntity" in-map="[testMedium:scriptDeployment.scriptDeploymentId + '_USER', testLong:ec.user.userId]"/>
         </actions>
     </service>
+    <service verb="deliver" noun="Slow">
+        <description>Sleeps delivery.parameters.sleepMs, then records like ToTestEntity (testMedium = deployment id + '_SLOW').</description>
+        <implements service="moqui.jexl.ScriptServices.deliver#UserScriptDeploymentResult"/>
+        <actions>
+            <script>Thread.sleep((delivery?.parameters?.sleepMs ?: 0) as long)</script>
+            <service-call name="create#moqui.test.TestEntity" in-map="[testMedium:scriptDeployment.scriptDeploymentId + '_SLOW']"/>
+        </actions>
+    </service>
     <service verb="deliver" noun="Refused">
         <implements service="moqui.jexl.ScriptServices.deliver#UserScriptDeploymentResult"/>
         <actions><return error="true" message="The endpoint refused it."/></actions>
@@ -68,6 +76,8 @@ along with this software (see the LICENSE.md file). If not, see
         <implements service="moqui.jexl.ScriptServices.read#ScriptSource"/>
         <actions><script><![CDATA[
             if (input.sleepMs) Thread.sleep(input.sleepMs as long)
+            // spinMs: busy for that long, ignoring any interrupt (a read that will not stop)
+            if (input.spinMs) { long until = System.currentTimeMillis() + (input.spinMs as long); while (System.currentTimeMillis() < until) { Thread.onSpinWait() } }
             if (input.echoUser) { rows = [[userId: ec.user.userId]]; rowCount = 1L; return }
             List all = [[line: 'L1', qty: 1], [line: 'L2', qty: 2], [line: 'L3', qty: 3]]
             rows = input.where ? all.findAll { org.moqui.jexl.script.ReadConditions.matches(input.where, it) } : all

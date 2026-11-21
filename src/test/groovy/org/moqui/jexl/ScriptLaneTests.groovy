@@ -250,4 +250,28 @@ class ScriptLaneTests extends Specification {
         Thread thread
         volatile LaneResult result
     }
+
+    def "applicationCodeIgnoresUserBackPressure"() {
+        given:
+        System.setProperty('jexl_lane_stuck_cap', '1')
+        System.setProperty('jexl_lane_grace_ms', '50')
+        ScriptLane.resetForTests()
+        AtomicBoolean spin = new AtomicBoolean(true)
+
+        when:
+        LaneResult stuck = ScriptLane.run('A', 50L, { -> while (spin.get()) { Thread.onSpinWait() }; 0 } as Callable<Object>)
+        LaneResult userHeld = ScriptLane.run('B', 1_000L, { 1 } as Callable<Object>)
+        LaneResult app = ScriptLane.run(null, 1_000L, { 2 } as Callable<Object>, false)
+        spin.set(false)
+
+        then:
+        stuck.stuck
+        userHeld.status == 'HELD'
+        app.status == 'OK' && app.value == 2
+
+        cleanup:
+        spin.set(false)
+        long until = System.currentTimeMillis() + 3_000L
+        while (ScriptLane.stuckCount() > 0 && System.currentTimeMillis() < until) Thread.sleep(10)
+    }
 }

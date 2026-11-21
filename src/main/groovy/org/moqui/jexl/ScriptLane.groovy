@@ -116,25 +116,27 @@ class ScriptLane {
         if (userCode && inTransaction.call()) {
             return LaneResult.of('IN_TRANSACTION', 'A script cannot start inside an open transaction.')
         }
+        // NOTE: application code (userCode false) never waits on user scripts' back-pressure: no stuck cap, no queue,
+        // no shared thread slot (it still has its time limit and stuck handling)
         int stuckNow = STUCK.get()
-        if (stuckNow >= intSetting('jexl_lane_stuck_cap', 2)) {
+        if (userCode && stuckNow >= intSetting('jexl_lane_stuck_cap', 2)) {
             return LaneResult.of('HELD', "scripts are paused: ${stuckNow} stuck runs".toString())
         }
-        if (WAITING.incrementAndGet() > queueCap) {
+        if (userCode && WAITING.incrementAndGet() > queueCap) {
             WAITING.decrementAndGet()
             return LaneResult.of('BUSY', 'Scripts are busy right now; try again in a moment.')
         }
 
         String key = ownerKey ?: '-'
         Semaphore owner = (ownerKey || userCode) ? OWNERS.computeIfAbsent(key, { String k -> new Semaphore(1) }) : null
-        Semaphore threads = threadSlots
+        Semaphore threads = userCode ? threadSlots : null
         long waitMs = intSetting('jexl_lane_wait_ms', 30_000)
         long deadline = System.currentTimeMillis() + waitMs
         try {
             if (owner != null && !owner.tryAcquire(waitMs, TimeUnit.MILLISECONDS)) {
                 return LaneResult.of('HELD', "Another script of the same owner ran past ${waitMs} ms; this one was held.".toString())
             }
-            if (!threads.tryAcquire(Math.max(0L, deadline - System.currentTimeMillis()), TimeUnit.MILLISECONDS)) {
+            if (threads != null && !threads.tryAcquire(Math.max(0L, deadline - System.currentTimeMillis()), TimeUnit.MILLISECONDS)) {
                 owner?.release()
                 return LaneResult.of('HELD', "Every script thread was busy for ${waitMs} ms; this run was held.".toString())
             }
@@ -142,7 +144,7 @@ class ScriptLane {
             Thread.currentThread().interrupt()
             return LaneResult.of('HELD', 'Interrupted while waiting for a script thread.')
         } finally {
-            WAITING.decrementAndGet()
+            if (userCode) WAITING.decrementAndGet()
         }
 
         RunState state = new RunState()
@@ -165,7 +167,7 @@ class ScriptLane {
                         STUCK.decrementAndGet()
                         logger.info("jexl script no longer stuck owner=${key} thread=${Thread.currentThread().name}")
                     } else {
-                        threads.release()
+                        threads?.release()
                     }
                     owner?.release()
                 }
@@ -181,7 +183,7 @@ class ScriptLane {
                 if (!state.started) {
                     // NOTE: never started: nothing will run its cleanup, so the slots go back here and it is not stuck
                     state.abandoned = true
-                    threads.release()
+                    threads?.release()
                     owner?.release()
                     return new LaneResult('TIME', null, null, "The script did not start within ${timeoutMs} ms.".toString(), false)
                 }
@@ -201,7 +203,7 @@ class ScriptLane {
                         stuck = true
                         STUCK.incrementAndGet()
                         // NOTE: the thread slot goes back now, so a fresh thread takes the stuck one's place
-                        threads.release()
+                        threads?.release()
                         logger.warn("jexl script stuck owner=${key} thread=jexl-script (ignored its stop past ${timeoutMs} ms)")
                     }
                 }
@@ -214,7 +216,7 @@ class ScriptLane {
             synchronized (state) {
                 if (!state.started) {
                     state.abandoned = true
-                    threads.release()
+                    threads?.release()
                     owner?.release()
                 }
             }

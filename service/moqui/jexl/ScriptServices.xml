@@ -117,7 +117,7 @@ along with this software (see the LICENSE.md file). If not, see
             <if condition="userScriptId"><script><![CDATA[
                 def before = ec.entity.find('jexl.script.UserScript').condition('userScriptId', userScriptId).disableAuthz().useCache(false).one()
                 boolean changed = before != null && (before.scriptBody != scriptBody || (before.readSpecJson ?: null) != (readSpecJson ?: null) ||
-                        before.scriptProfile != checked.profile)
+                        before.scriptProfile != checked.profile || (before.isActive ?: 'Y') != (isActive ?: 'Y'))
                 if (changed) {
                     def others = ec.entity.find('jexl.script.UserScriptDeployment').condition('userScriptId', userScriptId)
                             .condition('isActive', 'Y').condition('ownerUserId', org.moqui.entity.EntityCondition.NOT_EQUAL, ec.user.userId)
@@ -352,11 +352,20 @@ along with this software (see the LICENSE.md file). If not, see
             </script>
             <if condition="inputServiceName &amp;&amp; !org.moqui.jexl.ScriptDeploymentRunner.implementsInterface(ec, inputServiceName, org.moqui.jexl.ScriptDeploymentRunner.INPUT_INTERFACE)">
                 <message error="true">Input service ${inputServiceName} does not implement ${org.moqui.jexl.ScriptDeploymentRunner.INPUT_INTERFACE}.</message></if>
+            <!-- storing a deployment makes the caller its owner, so it always needs the schedule permission (checked here
+                too, since a screen grant may inherit authz down to this service) -->
+            <if condition="!ec.user.userId || !org.moqui.jexl.ScriptDeploymentRunner.maySchedule(ec, ec.user.userId)">
+                <return error="true" message="Storing a deployment needs permission to schedule scripts."/></if>
             <set field="deliveryList" from="deliveries ?: (deliveryServiceName ? [[deliveryServiceName:deliveryServiceName]] : [])"/>
             <if condition="!deliveryList"><message error="true">A deployment needs at least one delivery.</message></if>
             <iterate list="deliveryList" entry="oneDelivery">
                 <if condition="!org.moqui.jexl.ScriptDeploymentRunner.implementsInterface(ec, oneDelivery.deliveryServiceName, org.moqui.jexl.ScriptDeploymentRunner.DELIVERY_INTERFACE)">
                     <message error="true">Delivery service ${oneDelivery.deliveryServiceName} does not implement ${org.moqui.jexl.ScriptDeploymentRunner.DELIVERY_INTERFACE}.</message></if>
+                <if condition="oneDelivery.parametersJson"><script><![CDATA[
+                    Object parsed = null
+                    try { parsed = new groovy.json.JsonSlurper().parseText(oneDelivery.parametersJson as String) } catch (Exception e) { }
+                    if (!(parsed instanceof Map)) ec.message.addError("The parameters of ${oneDelivery.deliveryServiceName} are not valid JSON (an object).".toString())
+                ]]></script></if>
             </iterate>
             <check-errors/>
 

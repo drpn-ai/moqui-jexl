@@ -35,6 +35,11 @@ import java.sql.Timestamp
 @CompileStatic
 class EntitySource {
     static final String READABLE_GROUP = 'JEXL_READABLE'
+    private static final Closure<Boolean> DEFAULT_STOP_REQUESTED = { -> Thread.currentThread().isInterrupted() }
+    /** Whether the read must stop (its lane run timed out); a seam so tests need not interrupt a JDBC thread. */
+    static Closure<Boolean> stopRequested = DEFAULT_STOP_REQUESTED
+
+    static void resetForTests() { stopRequested = DEFAULT_STOP_REQUESTED }
 
     static Map<String, Object> read(ExecutionContext ec, Map input, Timestamp runDate, String timeZone, int maxRows) {
         String name = input.get('name')?.toString() ?: 'input'
@@ -48,6 +53,13 @@ class EntitySource {
         if (entityName.startsWith('moqui.')) return error('READ_NOT_ALLOWED', "Scripts never read ${entityName}: moqui.* entities are not readable.")
         String moquiMember = moquiMember(ec, ed, 0)
         if (moquiMember) return error('READ_NOT_ALLOWED', "Scripts never read ${entityName}: it joins ${moquiMember}, a moqui.* entity.")
+        if (ed.entityInfo.authorizeSkipView) {
+            return error('READ_NOT_ALLOWED', "Scripts never read ${entityName}: it is authorize-skip=\"view\", so no grant or filter would apply.")
+        }
+        if (!Boolean.TRUE.is(((org.moqui.impl.context.ExecutionContextFactoryImpl) ec.factory).artifactTypeAuthzEnabled
+                .get(org.moqui.context.ArtifactExecutionInfo.ArtifactType.AT_ENTITY))) {
+            return error('READ_NOT_ALLOWED', 'Scripts read entities only while entity authorization is on.')
+        }
         if (!listed(ec, entityName)) {
             return error('READ_NOT_ALLOWED', "${entityName} is not one of the entities scripts may read (artifact group ${READABLE_GROUP}).")
         }
@@ -100,13 +112,14 @@ class EntitySource {
             try {
                 EntityValue record
                 while ((record = records.next()) != null) {
+                    if (stopRequested.call()) return error('READ_ERROR', "Input '${name}': the read was stopped (it ran past its time).")
                     groups.add(record.getMap())
                     if (groups.size() > maxRows) {
                         return error('READ_TOO_LARGE', "Input '${name}' has more than ${maxRows} groups; the limit is ${maxRows}. Group it more coarsely or narrow it.")
                     }
                 }
             } finally {
-                records.close()
+                try { records.close() } catch (Exception ignored) { }
             }
             List<Map> rows = ReadConditions.order(groups.rows(), orderBy)
             return [rows: rows, rowCount: (long) rows.size()] as Map<String, Object>

@@ -94,7 +94,7 @@ class ReadStep {
 
         switch (lane.status) {
             case 'OK': return (Map<String, Object>) lane.value
-            case 'TIME': return failed('READ_ERROR', "The read took longer than ${timeout} ms and was stopped.")
+            case 'TIME': return failed(lane.stuck ? 'STUCK' : 'READ_ERROR', "The read took longer than ${timeout} ms and was stopped${lane.stuck ? ', and is still running (stuck)' : ''}.")
             case 'FAILED': return failed('READ_ERROR', "The read failed: ${lane.error?.message}")
             case 'NO_OWNER': return failed('READ_NOT_ALLOWED', 'A read runs as its owner, and this run has none.')
             default: return failed(lane.status, lane.message)

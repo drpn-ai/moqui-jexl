@@ -105,8 +105,8 @@ class ScriptDeploymentRunner {
             return [status: SCRIPT_MISSING, message: 'The script was deleted or switched off.', startDate: started] as Map<String, Object>
         }
         String ownerUserId = deployment.ownerUserId
-        String lost = ownerProblem(ec, ownerUserId)
-        if (lost) return [status: OWNER_LOST, message: lost, startDate: started] as Map<String, Object>
+        Map<String, Object> problem = ownerProblem(ec, ownerUserId)
+        if (problem) return problem + [startDate: started]
         String ownerKey = ownerKey(ec, deployment)
         ScriptProfile profile = ScriptProfiles.get(script.getString('scriptProfile') ?: ScriptProfiles.SCRIPT)
 
@@ -151,15 +151,23 @@ class ScriptDeploymentRunner {
                 .condition('scriptDeploymentId', deployment.scriptDeploymentId).condition('isActive', 'Y')
                 .orderBy('deliverySeqId').useCache(false).disableAuthz().list()
         if (deliveries.isEmpty()) return base + [status: DELIVERY_FAILED, message: 'The deployment has no active delivery.', deliveries: []]
-        // NOTE: deliveries run as the owner, in a fresh context with authz on, like the read
-        LaneResult lane = org.moqui.jexl.script.AsOwner.run(ec, ownerUserId, ownerKey, deliveryTimeoutMs()) { ExecutionContext own ->
-            return deliveries.collect { EntityValue d -> deliverOne(own, deployment, d, normalized, files, scriptRunId) }
+        // NOTE: deliveries run as the owner, in a fresh context with authz on, like the read; past the time limit no
+        // further delivery starts, and the outcomes already known are kept
+        long timeout = deliveryTimeoutMs()
+        long deadline = System.currentTimeMillis() + timeout
+        List<Map> known = Collections.synchronizedList(new ArrayList<Map>())
+        LaneResult lane = org.moqui.jexl.script.AsOwner.run(ec, ownerUserId, ownerKey, timeout) { ExecutionContext own ->
+            for (EntityValue d : deliveries) {
+                if (System.currentTimeMillis() >= deadline || Thread.currentThread().isInterrupted()) break
+                known.add(deliverOne(own, deployment, d, normalized, files, scriptRunId))
+            }
+            return known
         }
-        if (lane.status != 'OK') {
-            String why = lane.status == 'TIME' ? "the deliveries took longer than ${deliveryTimeoutMs()} ms" : (lane.message ?: lane.error?.message ?: lane.status)
-            return base + [status: DELIVERY_FAILED, message: "Not delivered: ${why}.".toString(), deliveries: []]
+        List<Map> outcomes = new ArrayList<Map>(known)
+        if (lane.status != 'OK' || outcomes.size() < deliveries.size()) {
+            String why = lane.status == 'OK' || lane.status == 'TIME' ? "the deliveries took longer than ${timeout} ms" : (lane.message ?: lane.error?.message ?: lane.status)
+            return base + [status: DELIVERY_FAILED, message: "Not delivered: ${why}.".toString(), deliveries: outcomes]
         }
-        List<Map> outcomes = (List<Map>) lane.value
         int failed = outcomes.count { Map o -> o.outcome == 'FAILED' } as int
         String status = failed == 0 ? OK : (failed == outcomes.size() ? DELIVERY_FAILED : DELIVERY_PARTIAL)
         String message = outcomes.size() == 1 ? outcomes[0].message :
@@ -175,10 +183,11 @@ class ScriptDeploymentRunner {
         if (!implementsInterface(ec, service, DELIVERY_INTERFACE)) {
             outcome = [outcome: 'FAILED', message: "${service} does not implement ${DELIVERY_INTERFACE}.".toString()]
         } else {
-            Map parameters = delivery.parametersJson ? (Map) new JsonSlurper().parseText(delivery.getString('parametersJson')) : [:]
-            Map deliveryMap = delivery.getMap() + [parameters: parameters]
             Map out = null
             try {
+                Object parsed = delivery.parametersJson ? new JsonSlurper().parseText(delivery.getString('parametersJson')) : [:]
+                if (!(parsed instanceof Map)) throw new IllegalArgumentException('its parameters are not a JSON object')
+                Map deliveryMap = delivery.getMap() + [parameters: (Map) parsed]
                 out = ec.service.sync().name(service).parameters([scriptDeployment: deployment.getMap(), delivery: deliveryMap,
                         scriptResult: normalized, files: files, scriptRunId: scriptRunId]).call()
             } catch (Throwable t) {
@@ -212,15 +221,30 @@ class ScriptDeploymentRunner {
         try { return raw ? Long.parseLong(raw.trim()) : 120_000L } catch (NumberFormatException ignored) { return 120_000L }
     }
 
-    /** Why the owner may no longer run this deployment (disabled, missing, or not allowed to schedule), or null. */
-    static String ownerProblem(ExecutionContext ec, String userId) {
-        if (!userId) return 'The deployment has no owner.'
+    /**
+     * Why the owner cannot run this deployment now, as an outcome, or null. OWNER_LOST (the deployment switches off):
+     * no owner, missing, disabled for good, terminated, or no longer allowed to schedule. HELD (tried again next time):
+     * a temporary lockout after failed logins, which anyone who knows the username can cause.
+     */
+    static Map<String, Object> ownerProblem(ExecutionContext ec, String userId) {
+        if (!userId) return lost('The deployment has no owner.')
         EntityValue account = ec.entity.find('moqui.security.UserAccount').condition('userId', userId).useCache(false).disableAuthz().one()
-        if (account == null) return "The owner ${userId} no longer exists, so the deployment was switched off.".toString()
-        if (account.disabled == 'Y') return "The owner ${account.username} is disabled, so the deployment was switched off.".toString()
-        if (!maySchedule(ec, userId)) return "The owner ${account.username} may no longer schedule scripts, so the deployment was switched off.".toString()
+        if (account == null) return lost("The owner ${userId} no longer exists, so the deployment was switched off.")
+        Timestamp now = ec.user.nowTimestamp
+        if (account.terminateDate != null && !((Timestamp) account.terminateDate).after(now)) {
+            return lost("The owner ${account.username}'s account was terminated, so the deployment was switched off.")
+        }
+        if (account.disabled == 'Y') {
+            if (account.disabledDateTime != null) {
+                return [status: 'HELD', message: "Not run: the owner ${account.username} is locked out for now; it runs again at its next time.".toString()] as Map<String, Object>
+            }
+            return lost("The owner ${account.username} is disabled, so the deployment was switched off.")
+        }
+        if (!maySchedule(ec, userId)) return lost("The owner ${account.username} may no longer schedule scripts, so the deployment was switched off.")
         return null
     }
+
+    private static Map<String, Object> lost(Object message) { [status: OWNER_LOST, message: message.toString()] as Map<String, Object> }
 
     /** Whether one of the user's current groups (or ALL_USERS) has a grant on JEXL_SCRIPT_SCHEDULE; any DENY wins. */
     static boolean maySchedule(ExecutionContext ec, String userId) {
@@ -316,6 +340,8 @@ class ScriptDeploymentRunner {
     }
 
     private static volatile long lastPruned = 0L
+    /** Test seam: runs once a scan has loaded its due list, before it claims any of them. */
+    static Closure afterDueLoaded = null
 
     /** Deletes run records older than jexl_run_retention_days (default 30). */
     static int pruneRuns(ExecutionContext ec, Timestamp now) {
@@ -327,7 +353,7 @@ class ScriptDeploymentRunner {
                 .disableAuthz().deleteAll()
     }
 
-    static void resetForTests() { lastPruned = 0L }
+    static void resetForTests() { lastPruned = 0L; afterDueLoaded = null }
 
     /**
      * The scheduled pass: every active deployment whose nextRunDate has come, each claimed (its next run date moved
@@ -340,6 +366,7 @@ class ScriptDeploymentRunner {
                 .condition('nextRunDate', EntityCondition.LESS_THAN_EQUAL_TO, scanTime)
                 .orderBy('nextRunDate').limit(Math.max(1, limit)).useCache(false).disableAuthz().list()
         List<Map<String, Object>> results = []
+        if (afterDueLoaded != null) afterDueLoaded.call(ec)
         for (EntityValue deployment in due) {
             String id = deployment.scriptDeploymentId
             String busyReason = ScriptLoadGate.busyReason(ec)
@@ -350,8 +377,10 @@ class ScriptDeploymentRunner {
             }
             Timestamp next = nextRunDate(deployment.cronExpression as String, deployment.timeZone as String, scanTime)
             // claimed by moving its next run date forward first, so a slow run or an overlapping scan never delivers twice
-            if (!updateIfStillDue(ec, id, scanTime) { EntityValue current -> current.set('nextRunDate', next) }) continue
-            Map<String, Object> outcome = execute(ec, deployment, true)
+            EntityValue claimed = null
+            if (!updateIfStillDue(ec, id, scanTime) { EntityValue current -> current.set('nextRunDate', next); claimed = current }) continue
+            // NOTE: runs on the row re-read under the lock, not the one loaded when the scan started (its owner may have changed)
+            Map<String, Object> outcome = execute(ec, claimed ?: deployment, true)
             recordOutcome(ec, id, outcome)
             logger.info("Script deployment ${id} ran: ${outcome.status} ${outcome.message}")
             results << ([scriptDeploymentId: id, status: outcome.status, message: outcome.message, nextRunDate: next] as Map<String, Object>)
