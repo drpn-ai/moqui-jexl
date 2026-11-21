@@ -106,4 +106,17 @@ class ScriptResultTests extends Specification {
             new String(ScriptResult.toCsv(file('x.csv', ['a'], [[it]])), StandardCharsets.UTF_8).endsWith("'${it}\r\n")
         }
     }
+
+    def "aFormulaBehindWhitespaceOrAControlCharacterIsNeutralised"() {
+        expect:
+        ['\t=1', '\r=1', ' =1', '\u0001+1', '\uFF1D1', '\uFF0B1', '\uFF0D1', '\uFF201'].every { String cell ->
+            String csv = new String(ScriptResult.toCsv(file('x.csv', ['a'], [[cell]])), StandardCharsets.UTF_8)
+            csv.contains("'" + cell) || csv.contains('"\'' + cell)
+        }
+    }
+
+    def "ordinaryTextIsLeftAlone"() {
+        expect:
+        new String(ScriptResult.toCsv(file('x.csv', ['a'], [['plain'], [' leading space']])), StandardCharsets.UTF_8) == '\uFEFFa\r\nplain\r\n leading space\r\n'
+    }
 }
