@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Scripts" default-menu-index="1">
+    <transition name="editScript"><default-response url="../EditScript"/></transition>
+    <actions>
+        <entity-find entity-name="jexl.script.UserScript" list="scriptList"><order-by field-name="scriptName"/></entity-find>
+    </actions>
+    <widgets>
+        <link url="editScript" text="New Script"/>
+        <form-list name="ScriptListForm" list="scriptList" skip-form="true">
+            <row-actions>
+                <entity-find-count entity-name="jexl.script.UserScriptDeployment" count-field="deploymentCount">
+                    <econdition field-name="userScriptId"/></entity-find-count>
+                <entity-find entity-name="jexl.script.UserScriptRun" list="lastRuns" limit="1">
+                    <econdition field-name="userScriptId"/><order-by field-name="-startDate"/></entity-find>
+                <set field="lastRunStatus" from="lastRuns ? lastRuns[0].statusId : ''"/>
+            </row-actions>
+            <field name="scriptName"><default-field title="Name"><link url="editScript" text="${scriptName}"
+                    parameter-map="[userScriptId:userScriptId]" link-type="anchor"/></default-field></field>
+            <field name="scriptProfile"><default-field title="Profile"><display/></default-field></field>
+            <field name="isActive"><default-field title="Active"><display/></default-field></field>
+            <field name="deploymentCount"><default-field title="Deployments"><display/></default-field></field>
+            <field name="lastRunStatus"><default-field title="Last Run"><display/></default-field></field>
+        </form-list>
+    </widgets>
+</screen>

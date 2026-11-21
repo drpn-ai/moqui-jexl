@@ -21,6 +21,13 @@ along with this software (see the LICENSE.md file). If not, see
         <tool-factory class="org.moqui.jexl.ScriptDeploymentToolFactory" init-priority="60" disabled="false"/>
     </tools>
 
+    <screen-facade>
+        <!-- User Scripts in the Tools app -->
+        <screen location="component://tools/screen/Tools.xml">
+            <subscreens-item name="JexlScripts" location="component://moqui-jexl/screen/JexlScripts.xml" menu-title="User Scripts" menu-index="90"/>
+        </screen>
+    </screen-facade>
+
     <resource-facade>
         <!-- .jexl files run sandboxed (org.moqui.jexl.ScriptSupervisor), beside the .groovy and .xml runners -->
         <script-runner extension=".jexl" class="org.moqui.jexl.JexlScriptRunner"/>

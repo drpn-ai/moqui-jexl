@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Deployment" default-menu-index="3" default-menu-include="false">
+    <parameter name="scriptDeploymentId"/>
+    <parameter name="userScriptId"/>
+    <transition name="storeDeployment" begin-transaction="false">
+        <actions><script><![CDATA[
+            // the deliveries text area holds one delivery per line: serviceName {parameters as JSON}
+            List deliveries = (deliveriesText ?: '').readLines().findAll { it.trim() }.collect { String line ->
+                int brace = line.indexOf('{')
+                [deliveryServiceName: (brace > 0 ? line.substring(0, brace) : line).trim(),
+                 parametersJson: brace > 0 ? line.substring(brace).trim() : null]
+            }
+            Map out = ec.service.sync().name('moqui.jexl.ScriptServices.store#UserScriptDeployment').parameters([scriptDeploymentId: scriptDeploymentId,
+                    userScriptId: userScriptId, cronExpression: cronExpression, timeZone: timeZone, isActive: isActive, deliveries: deliveries]).call()
+            if (out?.scriptDeploymentId) scriptDeploymentId = out.scriptDeploymentId
+        ]]></script></actions>
+        <default-response url="." parameter-map="[scriptDeploymentId:scriptDeploymentId]"/><error-response url="."/>
+    </transition>
+    <transition name="runNow" begin-transaction="false">
+        <service-call name="moqui.jexl.ScriptServices.run#UserScriptDeployment" in-map="[scriptDeploymentId:scriptDeploymentId]" out-map="runOut"/>
+        <actions><script>if (runOut?.status) ec.message.addMessage("Preview: ${runOut.status}. ${runOut.message ?: ''}".toString())</script></actions>
+        <default-response url="." parameter-map="[scriptDeploymentId:scriptDeploymentId]"/>
+    </transition>
+    <actions>
+        <entity-find-one entity-name="jexl.script.UserScriptDeployment" value-field="deployment"/>
+        <if condition="deployment != null"><set field="userScriptId" from="deployment.userScriptId"/></if>
+        <entity-find entity-name="jexl.script.UserScriptDeploymentDelivery" list="deliveryList">
+            <econdition field-name="scriptDeploymentId" ignore-if-empty="false"/><order-by field-name="deliverySeqId"/></entity-find>
+        <set field="deliveriesText" from="deliveryList.collect { it.deliveryServiceName + (it.parametersJson ? ' ' + it.parametersJson : '') }.join('\n')"/>
+        <entity-find-one entity-name="moqui.security.UserAccount" value-field="ownerAccount">
+            <field-map field-name="userId" from="deployment?.ownerUserId"/></entity-find-one>
+        <entity-find entity-name="jexl.script.UserScriptRun" list="runList" limit="50">
+            <econdition field-name="scriptDeploymentId" ignore-if-empty="false"/><order-by field-name="-startDate"/></entity-find>
+    </actions>
+    <widgets>
+        <form-single name="EditDeploymentForm" map="deployment" transition="storeDeployment">
+            <field name="scriptDeploymentId"><default-field><hidden/></default-field></field>
+            <field name="userScriptId"><default-field><hidden/></default-field></field>
+            <field name="cronExpression"><default-field title="Cron (Quartz)"><text-line size="30"/></default-field></field>
+            <field name="timeZone"><default-field title="Time Zone"><text-line size="30"/></default-field></field>
+            <field name="owner"><default-field title="Owner"><display text="${ownerAccount?.username ?: '(becomes you when saved)'}"/></default-field></field>
+            <field name="deliveriesText"><default-field title="Deliveries (one per line: service {json})"><text-area rows="4" cols="100"/></default-field></field>
+            <field name="isActive"><default-field title="Active"><drop-down><option key="Y"/><option key="N"/></drop-down></default-field></field>
+            <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
+        </form-single>
+        <section name="RunSection" condition="deployment != null"><widgets>
+            <link url="runNow" text="Run Now (preview, nothing sent)" parameter-map="[scriptDeploymentId:scriptDeploymentId]"/>
+            <form-list name="RunListForm" list="runList" skip-form="true">
+                <field name="startDate"><default-field title="Started"><display/></default-field></field>
+                <field name="statusId"><default-field title="Status"><display/></default-field></field>
+                <field name="units"><default-field><display/></default-field></field>
+                <field name="message"><default-field><display/></default-field></field>
+            </form-list>
+        </widgets></section>
+    </widgets>
+</screen>
