@@ -48,6 +48,14 @@ class ScriptDeliveries {
         sendNotification = DEFAULT_SEND_NOTIFICATION
     }
 
+    /** Templates the email delivery may use: setting jexl_email_templates (comma list), default JEXL_SCRIPT_RESULT. */
+    static Set<String> allowedTemplates() {
+        String raw = SystemBinding.getPropOrEnv('jexl_email_templates')
+        Set<String> out = new LinkedHashSet<>()
+        (raw ?: DEFAULT_TEMPLATE).split(',').each { String t -> if (t.trim()) out.add(t.trim()) }
+        return out
+    }
+
     static long maxAttachmentBytes() {
         String raw = SystemBinding.getPropOrEnv('jexl_email_attachment_bytes')
         try { return raw ? Long.parseLong(raw.trim()) : DEFAULT_ATTACHMENT_BYTES } catch (NumberFormatException ignored) { return DEFAULT_ATTACHMENT_BYTES }
@@ -63,10 +71,14 @@ class ScriptDeliveries {
         List<Map> attachments = tooLarge ? [] : (files ?: []).collect { Map f ->
             [fileName: f.name, contentType: f.contentType ?: 'text/csv', contentBytes: f.contentBytes] as Map
         }
+        String templateId = (parameters.get('emailTemplateId') ?: DEFAULT_TEMPLATE).toString()
+        if (!allowedTemplates().contains(templateId)) {
+            return [error: "Email template ${templateId} is not one scripts may use (setting jexl_email_templates).".toString()] as Map<String, Object>
+        }
         String scriptName = scriptName(ec, scriptDeployment)
         Map body = [scriptName: scriptName, summary: scriptResult?.get('summary'), fileNames: fileNames, filesTooLarge: tooLarge,
                     attachmentBytes: total, maxAttachmentBytes: maxAttachmentBytes()] as Map
-        sendEmail.call(ec, [emailTemplateId: parameters.get('emailTemplateId') ?: DEFAULT_TEMPLATE, toAddresses: to,
+        sendEmail.call(ec, [emailTemplateId: templateId, toAddresses: to,
                 ccAddresses: parameters.get('ccAddresses') ?: null, bodyParameters: body, attachments: attachments] as Map)
         if (ec.message.hasError()) return [error: ec.message.errorsString] as Map<String, Object>
         if (tooLarge) {
@@ -78,8 +90,18 @@ class ScriptDeliveries {
     static Map<String, Object> notification(ExecutionContext ec, Map scriptDeployment, Map parameters, Map scriptResult, List<Map> files) {
         String topic = parameters?.get('topic')?.toString()?.trim()
         if (!topic) return [error: 'The notification delivery needs a topic.'] as Map<String, Object>
+        // NOTE: a script notifies only its owner or one of the owner's groups (deliveries run as the owner)
+        String userId = parameters.get('userId')?.toString()
+        String groupId = parameters.get('userGroupId')?.toString()
+        if (userId && userId != ec.user.userId) {
+            return [error: "A script notifies only its owner, not ${userId}.".toString()] as Map<String, Object>
+        }
+        if (groupId && !ec.user.userGroupIdSet.contains(groupId)) {
+            return [error: "A script notifies only groups its owner belongs to, not ${groupId}.".toString()] as Map<String, Object>
+        }
+        if (!userId && !groupId) userId = ec.user.userId
         String scriptName = scriptName(ec, scriptDeployment)
-        sendNotification.call(ec, [topic: topic, title: scriptName, userGroupId: parameters.get('userGroupId'), userId: parameters.get('userId'),
+        sendNotification.call(ec, [topic: topic, title: scriptName, userGroupId: groupId, userId: userId,
                 message: [scriptName: scriptName, summary: scriptResult?.get('summary'),
                           fileNames: (files ?: []).collect { Map f -> f.name.toString() }]] as Map)
         return [outcome: 'OK', message: "Notified ${topic}.".toString()] as Map<String, Object>

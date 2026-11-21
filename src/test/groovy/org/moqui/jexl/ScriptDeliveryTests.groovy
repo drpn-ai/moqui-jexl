@@ -132,4 +132,33 @@ class ScriptDeliveryTests extends Specification {
         stored.size() >= 1
         (stored.find { it.toAddresses == 'ops@example.test' }?.body as String)?.contains('2 late orders')
     }
+
+    def "onlyAllowedTemplatesAreUsed"() {
+        when:
+        Map refused = deliver('deliver#ScriptEmail', [toAddresses: 'ops@example.test', emailTemplateId: 'PASSWORD_RESET'])
+        System.setProperty('jexl_email_templates', 'JEXL_SCRIPT_RESULT,APP_TEMPLATE')
+        Map allowed = deliver('deliver#ScriptEmail', [toAddresses: 'ops@example.test', emailTemplateId: 'APP_TEMPLATE'])
+
+        then:
+        refused.errors.contains('PASSWORD_RESET')
+        sent.size() == 1
+        sent[0].emailTemplateId == 'APP_TEMPLATE'
+        allowed.outcome == 'OK'
+
+        cleanup:
+        System.clearProperty('jexl_email_templates')
+    }
+
+    def "notificationsGoOnlyToTheOwnerOrTheOwnersGroups"() {
+        when:
+        Map otherUser = deliver('deliver#ScriptNotification', [topic: 'JexlScriptResult', userId: 'SOMEONE_ELSE'])
+        Map otherGroup = deliver('deliver#ScriptNotification', [topic: 'JexlScriptResult', userGroupId: 'NOT_MY_GROUP'])
+        Map self = deliver('deliver#ScriptNotification', [topic: 'JexlScriptResult', userId: ec.user.userId])
+
+        then:
+        otherUser.errors.contains('SOMEONE_ELSE')
+        otherGroup.errors.contains('NOT_MY_GROUP')
+        self.outcome == 'OK'
+        sent.size() == 1
+    }
 }
