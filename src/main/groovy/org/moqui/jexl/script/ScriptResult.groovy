@@ -31,7 +31,9 @@ import java.util.regex.Pattern
 class ScriptResult {
     static final int MAX_CELL_CHARS = 32_767
     private static final Pattern FILE_NAME = Pattern.compile('^[A-Za-z0-9._ -]{1,100}$')
-    private static final String FORMULA_LEADS = '=+-@\uFF1D\uFF0B\uFF0D\uFF20'
+    private static final String FORMULA_LEADS = '=+-@|\uFF1D\uFF0B\uFF0D\uFF20\uFF5C'
+    /** whitespace, control and format characters a spreadsheet may skip before reading a formula sign */
+    private static final Pattern INVISIBLE_LEAD = Pattern.compile('^[\\p{Z}\\p{Cc}\\p{Cf}\\s]+')
     private static final byte[] BOM = [(byte) 0xEF, (byte) 0xBB, (byte) 0xBF] as byte[]
 
     static int maxSummaryChars() { intSetting('jexl_result_summary_chars', 4_000) }
@@ -136,9 +138,12 @@ class ScriptResult {
     private static String csvCell(Object cell) {
         if (cell == null) return ''
         String text = cell.toString()
+        // NOTE: a number is never a formula, and -5 must stay a number
         // NOTE: a spreadsheet skips leading whitespace and control characters, and reads fullwidth signs too
-        String lead = text.replaceFirst('^[\\s\\u0000-\\u001F]+', '')
-        if (!lead.isEmpty() && FORMULA_LEADS.indexOf((int) lead.charAt(0)) >= 0) text = "'" + text
+        if (!(cell instanceof Number)) {
+            String lead = INVISIBLE_LEAD.matcher(text).replaceFirst('')
+            if (!lead.isEmpty() && FORMULA_LEADS.indexOf((int) lead.charAt(0)) >= 0) text = "'" + text
+        }
         if (text.contains(',') || text.contains('"') || text.contains('\n') || text.contains('\r')) {
             return '"' + text.replace('"', '""') + '"'
         }

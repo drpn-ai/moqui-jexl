@@ -119,4 +119,16 @@ class ScriptResultTests extends Specification {
         expect:
         new String(ScriptResult.toCsv(file('x.csv', ['a'], [['plain'], [' leading space']])), StandardCharsets.UTF_8) == '\uFEFFa\r\nplain\r\n leading space\r\n'
     }
+
+    def "invisibleLeadsAndPipesAreNeutralisedToo"() {
+        expect:
+        ['\u200B=1', '\u00A0=1', '\uFEFF+1', '|cmd'].every { String cell ->
+            new String(ScriptResult.toCsv(file('x.csv', ['a'], [[cell]])), StandardCharsets.UTF_8).contains("'" + cell)
+        }
+    }
+
+    def "numbersAreNeverPrefixed"() {
+        expect:
+        new String(ScriptResult.toCsv(file('x.csv', ['a'], [[-5], [-1.5G]])), StandardCharsets.UTF_8) == '\uFEFFa\r\n-5\r\n-1.5\r\n'
+    }
 }

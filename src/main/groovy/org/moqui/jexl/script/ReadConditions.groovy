@@ -23,7 +23,6 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.ZoneId
-import java.util.regex.Pattern
 
 /**
  * Conditions in a read spec: {field, op, value}, combined with {and: [...]} / {or: [...]}, nested at most 8 deep. The
@@ -140,8 +139,8 @@ class ReadConditions {
             case 'in': return ((List) value).any { Object v -> compare(actual, v) == 0 }
             case 'not-in': return !((List) value).any { Object v -> compare(actual, v) == 0 }
             case 'between': return compare(actual, ((List) value)[0]) >= 0 && compare(actual, ((List) value)[1]) <= 0
-            case 'like': return likePattern(value?.toString()).matcher(actual.toString()).matches()
-            case 'not-like': return !likePattern(value?.toString()).matcher(actual.toString()).matches()
+            case 'like': return likeMatches(value?.toString() ?: '', actual.toString())
+            case 'not-like': return !likeMatches(value?.toString() ?: '', actual.toString())
             default: return false
         }
     }
@@ -179,14 +178,25 @@ class ReadConditions {
         }
     }
 
-    private static Pattern likePattern(String like) {
-        StringBuilder regex = new StringBuilder()
-        for (char c : (like ?: '').toCharArray()) {
-            if (c == ('%' as char)) regex.append('.*')
-            else if (c == ('_' as char)) regex.append('.')
-            else regex.append(Pattern.quote(String.valueOf(c)))
+    /**
+     * SQL LIKE (% any run, _ one character, case-sensitive) in linear time: greedy two-pointer matching that returns to
+     * the last % instead of backtracking, so no pattern can make a match slow.
+     */
+    static boolean likeMatches(String pattern, String text) {
+        int p = 0, t = 0, star = -1, mark = 0
+        while (t < text.length()) {
+            if (p < pattern.length() && (pattern.charAt(p) == ('_' as char) || (pattern.charAt(p) != ('%' as char) && pattern.charAt(p) == text.charAt(t)))) {
+                p++; t++
+            } else if (p < pattern.length() && pattern.charAt(p) == ('%' as char)) {
+                star = p++; mark = t
+            } else if (star >= 0) {
+                p = star + 1; t = ++mark
+            } else {
+                return false
+            }
         }
-        return Pattern.compile(regex.toString(), Pattern.DOTALL)
+        while (p < pattern.length() && pattern.charAt(p) == ('%' as char)) p++
+        return p == pattern.length()
     }
 
     /** In-memory group-by: one row per distinct groupBy values (first-seen order), with each measure under its as name. */

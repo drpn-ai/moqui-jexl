@@ -16,6 +16,7 @@ package org.moqui.jexl
 import org.moqui.jexl.script.ReadConditions
 import org.moqui.jexl.script.ReadSpec
 import spock.lang.Specification
+import spock.lang.Timeout
 import spock.lang.Unroll
 
 /** The read spec (inputs a script reads before it runs) and its conditions, matched and grouped in memory. */
@@ -130,5 +131,17 @@ class ReadSpecTests extends Specification {
         expect:
         ReadConditions.group([[t: 2], [t: 4]], [], [[fn: 'min', field: 't', as: 'lo'], [fn: 'max', field: 't', as: 'hi'],
                 [fn: 'avg', field: 't', as: 'mean']]) == [[lo: 2, hi: 4, mean: 3]]
+    }
+
+    @Timeout(2)
+    def "likeMatchingIsLinear"() {
+        expect:
+        !ReadConditions.matches([field: 'a', op: 'like', value: '%a%a%a%a%a%a%a%a%a%a%a%a%b'], [a: 'a' * 20_000])
+        ReadConditions.matches([field: 'a', op: 'like', value: '%a%a%b'], [a: 'xaxxaxxb'])
+        ReadConditions.matches([field: 'a', op: 'like', value: 'a%'], [a: 'a'])
+        !ReadConditions.matches([field: 'a', op: 'like', value: '_'], [a: ''])
+        ReadConditions.matches([field: 'a', op: 'like', value: '%'], [a: ''])
+        ReadConditions.matches([field: 'a', op: 'like', value: 'a.b'], [a: 'a.b'])
+        !ReadConditions.matches([field: 'a', op: 'like', value: 'a.b'], [a: 'axb'])
     }
 }
