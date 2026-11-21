@@ -40,12 +40,15 @@ class EntitySource {
         String name = input.get('name')?.toString() ?: 'input'
         String entityName = input.get('entityName')?.toString()
         if (!entityName) return error('READ_ERROR', "Input '${name}' names no entity.")
-        if (entityName.startsWith('moqui.')) return error('READ_NOT_ALLOWED', "Scripts never read ${entityName}: moqui.* entities are not readable.")
         EntityDefinition ed = ((EntityFacadeImpl) ec.entity).getEntityDefinition(entityName)
         if (ed == null) return error('READ_ERROR', "There is no entity ${entityName}.")
+        // NOTE: checked on the resolved name (a short name like UserAccount resolves to moqui.security.UserAccount),
+        // and that same name is the one queried
+        entityName = ed.getFullEntityName()
+        if (entityName.startsWith('moqui.')) return error('READ_NOT_ALLOWED', "Scripts never read ${entityName}: moqui.* entities are not readable.")
         String moquiMember = moquiMember(ec, ed, 0)
         if (moquiMember) return error('READ_NOT_ALLOWED', "Scripts never read ${entityName}: it joins ${moquiMember}, a moqui.* entity.")
-        if (!listed(ec, ed.getFullEntityName())) {
+        if (!listed(ec, entityName)) {
             return error('READ_NOT_ALLOWED', "${entityName} is not one of the entities scripts may read (artifact group ${READABLE_GROUP}).")
         }
 

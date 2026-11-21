@@ -107,6 +107,15 @@ class EntitySourceTests extends Specification {
         out.error.kind == 'READ_NOT_ALLOWED'
     }
 
+    def "aMoquiEntityByItsShortNameIsRefused"() {
+        when:
+        Map out = read([name: 'u', source: 'entity', entityName: 'UserAccount', fields: ['username']])
+
+        then:
+        out.error.kind == 'READ_NOT_ALLOWED'
+        out.error.message.contains('moqui.* entities are not readable')
+    }
+
     def "aViewOverAMoquiEntityIsRefused"() {
         when:
         Map out = read([name: 'v', source: 'entity', entityName: 'jexl.test.ThingWithUser', fields: ['thingId', 'username']])
