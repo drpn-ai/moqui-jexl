@@ -51,24 +51,12 @@ import java.util.concurrent.atomic.AtomicInteger
 @CompileStatic
 class ScriptSupervisor {
 
-    static final String EXPRESSION = 'EXPRESSION'
-    static final String SCRIPT = 'SCRIPT'
-    static final List<String> PROFILES = [EXPRESSION, SCRIPT].asImmutable()
+    static final String EXPRESSION = ScriptProfiles.EXPRESSION
+    static final String SCRIPT = ScriptProfiles.SCRIPT
 
     /** The one name a script may read. */
     static final String INPUT_NAME = 'input'
 
-    static final Map<String, Object> LIMITS = [
-            (EXPRESSION): [maxSourceChars: 2_000, unitLimit: 100_000L, timeoutMs: 250L],
-            (SCRIPT)    : [maxSourceChars: 64_000, unitLimit: 2_000_000L, timeoutMs: 2_000L],
-    ].asImmutable() as Map<String, Object>
-    static final int MAX_STRING_CHARS = 65_536
-    static final int MAX_COLLECTION_SIZE = 10_000
-    static final int MAX_INPUT_JSON_CHARS = 2_000_000
-    static final int MAX_OUTPUT_JSON_CHARS = 65_536
-    static final int MAX_OUTPUT_NODES = 20_000
-    static final int MAX_INPUT_VALUES = 500_000
-    static final int MAX_DEPTH = 32
 
     // NOTE: what usually lies behind each limit, so a refused save says what to change
     private static final Map<String, String> LIMIT_HINTS = [
@@ -84,10 +72,10 @@ class ScriptSupervisor {
     private static final JexlFeatures EXPRESSION_FEATURES = new JexlFeatures(SCRIPT_FEATURES)
             .script(false).loops(false).lambda(false).thinArrow(false).fatArrow(false).localVar(false).sideEffect(false)
 
-    private static final Map<String, JexlEngine> ENGINES = [
-            (EXPRESSION): engine(EXPRESSION_FEATURES),
-            (SCRIPT)    : engine(SCRIPT_FEATURES),
-    ].asImmutable()
+    private static final JexlEngine EXPRESSION_ENGINE = engine(EXPRESSION_FEATURES)
+    private static final JexlEngine SCRIPT_ENGINE = engine(SCRIPT_FEATURES)
+
+    private static JexlEngine engineFor(ScriptProfile profile) { profile.statements ? SCRIPT_ENGINE : EXPRESSION_ENGINE }
 
     private static final AtomicInteger threadCount = new AtomicInteger()
     /** two threads and sixteen waiting places: a burst queues briefly, then is refused, never piles onto Moqui */
@@ -116,11 +104,9 @@ class ScriptSupervisor {
         return thread
     }
 
-    private static Map limitsOf(String profileName) { (Map) LIMITS[profileName] }
-
     static String profileOf(Object profile) {
         String value = profile?.toString()?.trim()?.toUpperCase(Locale.ROOT) ?: SCRIPT
-        return PROFILES.contains(value) ? value : null
+        return ScriptProfiles.names().contains(value) ? value : null
     }
 
     /**
@@ -129,10 +115,11 @@ class ScriptSupervisor {
      */
     static Map<String, Object> validate(Object profile, String body) {
         String profileName = profileOf(profile)
-        if (profileName == null) return failure(null, 'INVALID', "Profile must be one of ${PROFILES.join(', ')}.".toString())
+        if (profileName == null) return failure(null, 'INVALID', "Profile must be one of ${ScriptProfiles.names().join(', ')}.".toString())
+        ScriptProfile limits = ScriptProfiles.get(profileName)
         String source = body ?: ''
         if (!source.trim()) return failure(profileName, 'INVALID', 'The script is empty.')
-        int maxChars = limitsOf(profileName).maxSourceChars as int
+        int maxChars = limits.maxSourceChars
         if (source.length() > maxChars) {
             return failure(profileName, 'INVALID', "The script is ${source.length()} characters; the ${profileName.toLowerCase(Locale.ROOT)} limit is ${maxChars}.".toString())
         }
@@ -150,7 +137,7 @@ class ScriptSupervisor {
         }
         JexlScript script
         try {
-            script = ENGINES[profileName].createScript(new JexlInfo('script', 1, 1), source)
+            script = engineFor(limits).createScript(new JexlInfo('script', 1, 1), source)
         } catch (JexlException e) {
             return failure(profileName, e instanceof JexlException.Feature ? 'NOT_ALLOWED' : 'SYNTAX', message(e), e)
         }
@@ -177,18 +164,18 @@ class ScriptSupervisor {
         Map<String, Object> checked = validate(profile, body)
         if (!checked.ok) return notRun(checked)
         String profileName = checked.profile as String
-        Map limits = limitsOf(profileName)
+        ScriptProfile limits = ScriptProfiles.get(profileName)
 
         Object plainInput
         try {
-            plainInput = copyNode(input, 0, new Tally())
+            plainInput = copyNode(input, 0, new Tally(limits))
         } catch (IllegalArgumentException e) {
             return notRun(failure(profileName, 'INPUT', e.message))
         }
 
         // NOTE: the engine caches the parse validate just did
-        JexlScript script = ENGINES[profileName].createScript(new JexlInfo('script', 1, 1), body)
-        ScriptBudget budget = new ScriptBudget(limits.unitLimit as long, MAX_STRING_CHARS, MAX_COLLECTION_SIZE)
+        JexlScript script = engineFor(limits).createScript(new JexlInfo('script', 1, 1), body)
+        ScriptBudget budget = new ScriptBudget(limits.units, limits.maxStringChars, limits.maxCollectionSize)
         long started = System.nanoTime()
         Future<Object> future
         try {
@@ -199,10 +186,10 @@ class ScriptSupervisor {
                     context.set(INPUT_NAME, plainInput)
                     Object raw = script.execute(context)
                     // shaped here, inside the budget and the time limit: a result can be a huge range or a deep graph
-                    Object plain = toPlain(raw, 0, new Tally())
+                    Object plain = toPlain(raw, 0, new Tally(limits))
                     String json = JsonOutput.toJson(plain)
-                    if (json.length() > MAX_OUTPUT_JSON_CHARS) {
-                        throw new LimitReached('MEMORY', "The result is ${json.length()} characters of JSON; the limit is ${MAX_OUTPUT_JSON_CHARS}.".toString())
+                    if (json.length() > limits.maxOutputJsonChars) {
+                        throw new LimitReached('MEMORY', "The result is ${json.length()} characters of JSON; the limit is ${limits.maxOutputJsonChars}.".toString())
                     }
                     return plain
                 } finally {
@@ -215,7 +202,7 @@ class ScriptSupervisor {
 
         Map<String, Object> out
         try {
-            Object plain = future.get(limits.timeoutMs as long, TimeUnit.MILLISECONDS)
+            Object plain = future.get(limits.timeoutMs, TimeUnit.MILLISECONDS)
             out = [ok: true, profile: profileName, result: plain, error: null] as Map<String, Object>
         } catch (TimeoutException ignored) {
             future.cancel(true)
@@ -238,7 +225,7 @@ class ScriptSupervisor {
         String profileName = profileOf(profile) ?: SCRIPT
         Object sample
         try {
-            sample = parseInputJson(sampleJson)
+            sample = parseInputJson(sampleJson, profileName)
         } catch (IllegalArgumentException e) {
             return refused('BAD_SAMPLE', null, "Sample input: ${e.message}".toString())
         }
@@ -250,7 +237,7 @@ class ScriptSupervisor {
             String hint = LIMIT_HINTS[error.kind as String]
             return refused('FAILS_ON_SAMPLE', error.line, "On its sample input the script stops: ${error.message}${hint ? ' ' + hint : ''}".toString())
         }
-        long unitLimit = limitsOf(profileName).unitLimit as long
+        long unitLimit = ScriptProfiles.get(profileName).units
         long units = run.units as long
         if (units * 2 > unitLimit) {
             return refused('TOO_HEAVY', null, ("On its sample input alone the script uses ${Math.round(100d * units / unitLimit)}% of its work budget, " +
@@ -331,9 +318,10 @@ class ScriptSupervisor {
     }
 
     /** Parses JSON text for an input; blank is an empty map. */
-    static Object parseInputJson(String json) {
+    static Object parseInputJson(String json, String profileName = SCRIPT) {
         if (!json?.trim()) return [:]
-        if (json.length() > MAX_INPUT_JSON_CHARS) throw new IllegalArgumentException("The input is more than ${MAX_INPUT_JSON_CHARS} characters.".toString())
+        int maxChars = ScriptProfiles.get(profileOf(profileName) ?: SCRIPT).maxInputJsonChars
+        if (json.length() > maxChars) throw new IllegalArgumentException("The input is more than ${maxChars} characters.".toString())
         try {
             return new JsonSlurper().parseText(json)
         } catch (Exception e) {
@@ -348,14 +336,17 @@ class ScriptSupervisor {
 
     /** how much of an input or a result has been walked */
     private static class Tally {
+        final ScriptProfile limits
         int values = 0
         long jsonChars = 0L
+
+        Tally(ScriptProfile limits) { this.limits = limits }
     }
 
     /** A deep copy of the input holding only maps, lists, text, numbers, true/false and null. */
     private static Object copyNode(Object value, int depth, Tally tally) {
-        if (++tally.values > MAX_INPUT_VALUES) throw new IllegalArgumentException("The input holds more than ${MAX_INPUT_VALUES} values.".toString())
-        if (depth > MAX_DEPTH) throw new IllegalArgumentException("The input is nested more than ${MAX_DEPTH} levels deep.".toString())
+        if (++tally.values > tally.limits.maxInputValues) throw new IllegalArgumentException("The input holds more than ${tally.limits.maxInputValues} values.".toString())
+        if (depth > tally.limits.maxDepth) throw new IllegalArgumentException("The input is nested more than ${tally.limits.maxDepth} levels deep.".toString())
         if (value == null || value instanceof Boolean || value instanceof String) return value
         if (value instanceof BigDecimal) return checkInputDecimal((BigDecimal) value)
         if (value instanceof BigInteger || value instanceof Long || value instanceof Integer) return value
@@ -379,7 +370,7 @@ class ScriptSupervisor {
 
     /**
      * What the script returned, as JSON values; anything else (a function, a host object) is refused. Runs on the
-     * pool thread with the budget open: every node is charged, at most MAX_OUTPUT_NODES are shaped, and a non-list
+     * pool thread with the budget open: every node is charged, at most the profile's maxOutputNodes are shaped, and a non-list
      * collection (a range) is size-checked before it is walked.
      */
     private static Object toPlain(Object value, int depth, Tally tally) {
@@ -388,11 +379,11 @@ class ScriptSupervisor {
         tally.jsonChars += 4
         if (value instanceof String) tally.jsonChars += ((String) value).length() + 2
         else if (value instanceof BigDecimal) tally.jsonChars += ScriptBudget.plainLength(ScriptBudget.checkDecimal((BigDecimal) value))
-        if (tally.jsonChars > MAX_OUTPUT_JSON_CHARS) {
-            throw new LimitReached('MEMORY', "The result is more than ${MAX_OUTPUT_JSON_CHARS} characters of JSON.".toString())
+        if (tally.jsonChars > tally.limits.maxOutputJsonChars) {
+            throw new LimitReached('MEMORY', "The result is more than ${tally.limits.maxOutputJsonChars} characters of JSON.".toString())
         }
-        if (++tally.values > MAX_OUTPUT_NODES) throw new LimitReached('MEMORY', "The result holds more than ${MAX_OUTPUT_NODES} values.".toString())
-        if (depth > MAX_DEPTH) throw new LimitReached('OUTPUT', "The result is nested more than ${MAX_DEPTH} levels deep.".toString())
+        if (++tally.values > tally.limits.maxOutputNodes) throw new LimitReached('MEMORY', "The result holds more than ${tally.limits.maxOutputNodes} values.".toString())
+        if (depth > tally.limits.maxDepth) throw new LimitReached('OUTPUT', "The result is nested more than ${tally.limits.maxDepth} levels deep.".toString())
         if (value == null || value instanceof Boolean || value instanceof String) return value
         if (value instanceof BigDecimal) return value
         if (value instanceof Number) {

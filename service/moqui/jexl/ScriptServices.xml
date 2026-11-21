@@ -23,12 +23,12 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters>
             <parameter name="library" type="List"><description>[{name, help}]</description></parameter>
             <parameter name="profiles" type="List"/>
-            <parameter name="limits" type="Map"><description>{EXPRESSION: {maxSourceChars, unitLimit, timeoutMs}, SCRIPT: {...}}</description></parameter>
+            <parameter name="limits" type="Map"><description>{profile name: ScriptProfile.toMap()}</description></parameter>
         </out-parameters>
         <actions>
             <set field="library" from="org.moqui.jexl.ScriptSupervisor.libraryCatalog()"/>
-            <set field="profiles" from="org.moqui.jexl.ScriptSupervisor.PROFILES"/>
-            <set field="limits" from="org.moqui.jexl.ScriptSupervisor.LIMITS"/>
+            <set field="profiles" from="org.moqui.jexl.ScriptProfiles.names()"/>
+            <set field="limits" from="org.moqui.jexl.ScriptProfiles.names().collectEntries { [(it): org.moqui.jexl.ScriptProfiles.get(it).toMap()] }"/>
         </actions>
     </service>
 
