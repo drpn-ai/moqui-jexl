@@ -297,6 +297,28 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
 
+    <service verb="deliver" noun="ScriptEmail">
+        <description>Built-in delivery: emails the summary with the result's files attached as CSV (parameters:
+            toAddresses, ccAddresses, emailTemplateId). Over jexl_email_attachment_bytes in all, it sends without the files
+            and says so (outcome TOO_LARGE).</description>
+        <implements service="moqui.jexl.ScriptServices.deliver#UserScriptDeploymentResult"/>
+        <actions><script><![CDATA[
+            Map out = org.moqui.jexl.script.ScriptDeliveries.email(ec, scriptDeployment, delivery?.parameters ?: [:], scriptResult, files)
+            if (out.error) { ec.message.addError(out.error as String); return }
+            outcome = out.outcome; message = out.message
+        ]]></script></actions>
+    </service>
+    <service verb="deliver" noun="ScriptNotification">
+        <description>Built-in delivery: a Moqui notification with the summary and the file names, never the files
+            (parameters: topic, userGroupId or userId).</description>
+        <implements service="moqui.jexl.ScriptServices.deliver#UserScriptDeploymentResult"/>
+        <actions><script><![CDATA[
+            Map out = org.moqui.jexl.script.ScriptDeliveries.notification(ec, scriptDeployment, delivery?.parameters ?: [:], scriptResult, files)
+            if (out.error) { ec.message.addError(out.error as String); return }
+            outcome = out.outcome; message = out.message
+        ]]></script></actions>
+    </service>
+
     <service verb="store" noun="UserScriptDeployment">
         <description>Creates or updates a deployment after checking its script, cron, time zone and services, and sets
             its next run date (none while it is switched off). Whoever stores it becomes its owner: the user its runs read

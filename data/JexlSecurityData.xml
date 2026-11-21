@@ -53,6 +53,11 @@ along with this software (see the LICENSE.md file). If not, see
             nameIsPattern="N" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
     <moqui.security.ArtifactGroupMember artifactGroupId="JEXL_SCRIPT_SCHEDULE" artifactName="moqui.jexl.ScriptServices.store#ScriptSource"
             nameIsPattern="N" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
+    <!-- the built-in deliveries: whoever may schedule may use them; an application grants its own deliveries the same way -->
+    <moqui.security.ArtifactGroupMember artifactGroupId="JEXL_SCRIPT_SCHEDULE" artifactName="moqui.jexl.ScriptServices.deliver#ScriptEmail"
+            nameIsPattern="N" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="JEXL_SCRIPT_SCHEDULE" artifactName="moqui.jexl.ScriptServices.deliver#ScriptNotification"
+            nameIsPattern="N" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
     <moqui.security.ArtifactAuthz artifactAuthzId="JEXL_SCRIPT_SCHEDULE_ADMIN" userGroupId="ADMIN" artifactGroupId="JEXL_SCRIPT_SCHEDULE"
             authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
 </entity-facade-xml>
