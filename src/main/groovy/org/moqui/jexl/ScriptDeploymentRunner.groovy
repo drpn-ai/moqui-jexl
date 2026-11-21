@@ -13,13 +13,19 @@
  */
 package org.moqui.jexl
 
+import groovy.json.JsonOutput
+import groovy.json.JsonSlurper
 import org.moqui.context.ExecutionContext
 import org.moqui.entity.EntityCondition
+import org.moqui.jexl.script.ReadSpec
+import org.moqui.jexl.script.ReadStep
+import org.moqui.jexl.script.ScriptResult
 import org.moqui.entity.EntityValue
 import org.moqui.impl.context.ExecutionContextImpl
 import org.moqui.impl.service.ScheduledJobRunner
 import org.moqui.impl.service.ServiceDefinition
 import org.moqui.util.MNode
+import org.moqui.util.SystemBinding
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
@@ -28,11 +34,13 @@ import java.time.ZoneId
 import java.time.ZonedDateTime
 
 /**
- * A user script put to work (jexl.script.UserScriptDeployment): on its cron, in its own time zone, the input service
- * reads the input (or the script's sample is used), the script runs in ScriptSupervisor, and the delivery service
- * receives what it returned as scriptResult. The script stays pure: it reads and returns data, the services do the I/O.
+ * A user script put to work (jexl.script.UserScriptDeployment): on its cron, in its own time zone, as its owner (re-checked
+ * every run), the script's read step (or an input service, or its sample) gives the input, the script runs in
+ * ScriptSupervisor, its result is checked against the result contract (ScriptResult), and every active delivery receives
+ * it; one failing delivery never stops the others. A real run is recorded (UserScriptRun and the last-run fields). The
+ * script stays pure: it reads and returns data, the services do the I/O.
  *
- * NOTE: a result of null, blank text or an empty list or map means nothing to deliver, so the delivery service is not called
+ * NOTE: a result of null, blank text or an empty list or map is nothing to send, so no delivery is called
  */
 class ScriptDeploymentRunner {
     protected final static Logger logger = LoggerFactory.getLogger(ScriptDeploymentRunner.class)
@@ -43,13 +51,19 @@ class ScriptDeploymentRunner {
     static final String INPUT_INTERFACE = 'moqui.jexl.ScriptServices.read#UserScriptDeploymentInput'
     static final String DELIVERY_INTERFACE = 'moqui.jexl.ScriptServices.deliver#UserScriptDeploymentResult'
 
-    static final String DELIVERED = 'DELIVERED'
+    static final String SCHEDULE_GROUP = 'JEXL_SCRIPT_SCHEDULE'
+
+    static final String OK = 'OK'
     static final String PREVIEW = 'PREVIEW'
-    static final String NOTHING_TO_DELIVER = 'NOTHING_TO_DELIVER'
+    static final String NOTHING_TO_SEND = 'NOTHING_TO_SEND'
     static final String SCRIPT_ERROR = 'SCRIPT_ERROR'
+    static final String RESULT_INVALID = 'RESULT_INVALID'
     static final String NO_INPUT = 'NO_INPUT'
-    static final String NOT_DELIVERED = 'NOT_DELIVERED'
+    static final String OWNER_LOST = 'OWNER_LOST'
+    static final String DELIVERY_PARTIAL = 'DELIVERY_PARTIAL'
+    static final String DELIVERY_FAILED = 'DELIVERY_FAILED'
     static final String SCRIPT_MISSING = 'SCRIPT_MISSING'
+    static final String STUCK = 'STUCK'
     /** due but the server is busy, retried on the next scan */
     static final String WAITING = 'WAITING'
     /** the server stayed busy past this run's window; skipped, never forced */
@@ -66,10 +80,9 @@ class ScriptDeploymentRunner {
     }
 
     /**
-     * Runs one deployment. deliver=false is a preview: the script runs and its result comes back, the delivery service
-     * is not called and the deployment's last-run fields are left alone. Never throws; errors the input or delivery
-     * service adds are reported in the outcome and kept off the caller's messages.
-     * {status, message, result, run, inputSummary, delivery}
+     * Runs one deployment. deliver=false is a preview: the script runs and its result comes back, no delivery is called
+     * and nothing is recorded. Never throws; errors a service adds are reported in the outcome and kept off the caller's
+     * messages. {status, message, result (raw), normalized, run, inputSummary, readCounts, deliveries, scriptRunId}
      */
     static Map<String, Object> execute(ExecutionContext ec, EntityValue deployment, boolean deliver) {
         ec.message.pushErrors()
@@ -85,42 +98,126 @@ class ScriptDeploymentRunner {
     }
 
     private static Map<String, Object> executeChecked(ExecutionContext ec, EntityValue deployment, boolean deliver) {
+        Timestamp started = ec.user.nowTimestamp
         EntityValue script = ec.entity.find(SCRIPT_ENTITY).condition('userScriptId', deployment.userScriptId)
                 .useCache(false).disableAuthz().one()
         if (script == null || script.isActive == 'N') {
-            return [status: SCRIPT_MISSING, message: 'The script was deleted or switched off.'] as Map<String, Object>
+            return [status: SCRIPT_MISSING, message: 'The script was deleted or switched off.', startDate: started] as Map<String, Object>
+        }
+        String ownerUserId = deployment.ownerUserId
+        String lost = ownerProblem(ec, ownerUserId)
+        if (lost) return [status: OWNER_LOST, message: lost, startDate: started] as Map<String, Object>
+        String ownerKey = ownerKey(ec, deployment)
+        ScriptProfile profile = ScriptProfiles.get(script.getString('scriptProfile') ?: ScriptProfiles.SCRIPT)
+
+        Map<String, Object> prepared
+        if (script.readSpecJson) {
+            ReadSpec spec
+            try {
+                spec = ReadSpec.parse(script.getString('readSpecJson'))
+            } catch (ReadSpec.Invalid e) {
+                return [status: 'READ_ERROR', message: "Read spec: ${e.message}".toString(), startDate: started] as Map<String, Object>
+            }
+            Map<String, Object> read = ReadStep.run(ec, spec, ownerUserId, ownerKey, started, deployment.getString('timeZone'), profile)
+            if (!read.ok) return [status: read.status, message: read.message, startDate: started] as Map<String, Object>
+            prepared = [input: read.input, inputSummary: [source: 'READ'], readCounts: read.readCounts] as Map<String, Object>
+        } else {
+            prepared = readInput(ec, deployment, script)
+            if (prepared.status) return prepared + [startDate: started]
         }
 
-        Map<String, Object> prepared = readInput(ec, deployment, script)
-        if (prepared.status) return prepared
-
-        Map<String, Object> run = ScriptSupervisor.evaluate(script.scriptProfile, script.scriptBody as String, prepared.input,
-                "deployment ${deployment.scriptDeploymentId}".toString())
-        Map<String, Object> base = [run: run, inputSummary: prepared.inputSummary] as Map<String, Object>
+        Map<String, Object> run = ScriptSupervisor.evaluate(script.scriptProfile, script.scriptBody as String, prepared.input, ownerKey)
+        Map<String, Object> base = [run: run, inputSummary: prepared.inputSummary, readCounts: prepared.readCounts, startDate: started] as Map<String, Object>
         if (!run.ok) {
             Map error = run.error as Map
-            return base + [status: SCRIPT_ERROR, message: "${error?.line ? 'Line ' + error.line + ': ' : ''}${error?.message}".toString()]
+            String kind = error?.kind
+            String status = kind in ['HELD', 'DISABLED', 'BUSY'] ? (kind == 'BUSY' ? 'HELD' : kind) : (run.stuck ? STUCK : SCRIPT_ERROR)
+            return base + [status: status, errorKind: kind, message: "${error?.line ? 'Line ' + error.line + ': ' : ''}${error?.message}".toString()]
         }
 
-        Object result = run.result
-        base.result = result
-        if (isNothing(result)) return base + [status: NOTHING_TO_DELIVER, message: 'The script returned nothing, so nothing was delivered.']
-        if (!deliver) return base + [status: PREVIEW, message: 'Preview only: nothing was delivered.']
+        base.result = run.result
+        Map<String, Object> normalized = ScriptResult.normalize(run.result, profile)
+        base.normalized = normalized
+        if (normalized.invalid) return base + [status: RESULT_INVALID, message: normalized.message]
+        if (normalized.nothing) return base + [status: NOTHING_TO_SEND, message: 'The script returned nothing, so nothing was sent.']
+        if (!deliver) return base + [status: PREVIEW, message: 'Preview only: nothing was sent.']
 
-        // NOTE: the first active delivery, until deployments deliver to all of theirs
-        EntityValue firstDelivery = ec.entity.find('jexl.script.UserScriptDeploymentDelivery')
+        String scriptRunId = ec.entity.sequencedIdPrimary('jexl.script.UserScriptRun', null, null)
+        base.scriptRunId = scriptRunId
+        List<Map> files = ((List<Map>) normalized.files).collect { Map f ->
+            [name: f.name, contentType: 'text/csv', contentBytes: ScriptResult.toCsv(f)] as Map
+        }
+        List<EntityValue> deliveries = ec.entity.find('jexl.script.UserScriptDeploymentDelivery')
                 .condition('scriptDeploymentId', deployment.scriptDeploymentId).condition('isActive', 'Y')
-                .orderBy('deliverySeqId').useCache(false).list().getFirst()
-        String deliveryServiceName = firstDelivery?.getString('deliveryServiceName')
-        if (!implementsInterface(ec, deliveryServiceName, DELIVERY_INTERFACE)) {
-            return base + [status: NOT_DELIVERED, message: "Not delivered: ${deliveryServiceName} does not implement ${DELIVERY_INTERFACE}.".toString()]
+                .orderBy('deliverySeqId').useCache(false).disableAuthz().list()
+        if (deliveries.isEmpty()) return base + [status: DELIVERY_FAILED, message: 'The deployment has no active delivery.', deliveries: []]
+        List<Map> outcomes = deliveries.collect { EntityValue d -> deliverOne(ec, deployment, d, normalized, files, scriptRunId) }
+        int failed = outcomes.count { Map o -> o.outcome == 'FAILED' } as int
+        String status = failed == 0 ? OK : (failed == outcomes.size() ? DELIVERY_FAILED : DELIVERY_PARTIAL)
+        String message = outcomes.size() == 1 ? outcomes[0].message :
+                outcomes.collect { Map o -> "${o.deliveryServiceName}: ${o.outcome}${o.message ? ' (' + o.message + ')' : ''}" }.join('; ')
+        return base + [status: status, message: message, deliveries: outcomes]
+    }
+
+    /** One delivery, interface-checked; its outcome (OK, TOO_LARGE or FAILED) also lands on its own row. */
+    private static Map deliverOne(ExecutionContext ec, EntityValue deployment, EntityValue delivery, Map normalized, List<Map> files,
+                                  String scriptRunId) {
+        String service = delivery.getString('deliveryServiceName')
+        Map outcome
+        if (!implementsInterface(ec, service, DELIVERY_INTERFACE)) {
+            outcome = [outcome: 'FAILED', message: "${service} does not implement ${DELIVERY_INTERFACE}.".toString()]
+        } else {
+            Map parameters = delivery.parametersJson ? (Map) new JsonSlurper().parseText(delivery.getString('parametersJson')) : [:]
+            Map deliveryMap = delivery.getMap() + [parameters: parameters]
+            Map out = ec.service.sync().name(service).parameters([scriptDeployment: deployment.getMap(), delivery: deliveryMap,
+                    scriptResult: normalized, files: files, scriptRunId: scriptRunId]).call()
+            if (ec.message.hasError()) {
+                outcome = [outcome: 'FAILED', message: ec.message.errorsString.trim()]
+                ec.message.clearErrors()
+            } else {
+                outcome = [outcome: (out?.outcome ?: 'OK').toString(), message: (out?.message ?: 'Delivered.').toString()]
+            }
         }
-        Map<String, Object> delivery = ec.service.sync().name(deliveryServiceName)
-                .parameters([scriptDeployment: deployment.getMap(), scriptResult: result]).call()
-        if (ec.message.hasError()) {
-            return base + [status: NOT_DELIVERED, message: "Not delivered: ${ec.message.errorsString}".toString()]
+        ec.transaction.runUseOrBegin(30, 'Error recording a script delivery outcome', {
+            EntityValue row = ec.entity.find('jexl.script.UserScriptDeploymentDelivery').condition([scriptDeploymentId: delivery.scriptDeploymentId,
+                    deliverySeqId: delivery.deliverySeqId]).useCache(false).disableAuthz().one()
+            row?.set('lastOutcome', outcome.outcome)
+            row?.set('lastMessage', fitField(outcome.message as String))
+            row?.update()
+        })
+        return outcome + [deliverySeqId: delivery.deliverySeqId, deliveryServiceName: service]
+    }
+
+    /** Why the owner may no longer run this deployment (disabled, missing, or not allowed to schedule), or null. */
+    static String ownerProblem(ExecutionContext ec, String userId) {
+        if (!userId) return 'The deployment has no owner.'
+        EntityValue account = ec.entity.find('moqui.security.UserAccount').condition('userId', userId).useCache(false).disableAuthz().one()
+        if (account == null) return "The owner ${userId} no longer exists, so the deployment was switched off.".toString()
+        if (account.disabled == 'Y') return "The owner ${account.username} is disabled, so the deployment was switched off.".toString()
+        if (!maySchedule(ec, userId)) return "The owner ${account.username} may no longer schedule scripts, so the deployment was switched off.".toString()
+        return null
+    }
+
+    /** Whether one of the user's current groups (or ALL_USERS) has a grant on JEXL_SCRIPT_SCHEDULE. */
+    static boolean maySchedule(ExecutionContext ec, String userId) {
+        Timestamp now = ec.user.nowTimestamp
+        List<String> groups = ec.entity.find('moqui.security.UserGroupMember').condition('userId', userId).useCache(false).disableAuthz().list()
+                .findAll { EntityValue m -> (m.fromDate == null || !((Timestamp) m.fromDate).after(now)) && (m.thruDate == null || ((Timestamp) m.thruDate).after(now)) }
+                .collect { EntityValue m -> m.getString('userGroupId') }
+        groups.add('ALL_USERS')
+        return ec.entity.find('moqui.security.ArtifactAuthz').condition('artifactGroupId', SCHEDULE_GROUP)
+                .condition('userGroupId', EntityCondition.IN, groups).condition('authzTypeEnumId', EntityCondition.NOT_EQUAL, 'AUTHZT_DENY')
+                .useCache(false).disableAuthz().count() > 0
+    }
+
+    /** The lane owner key: what the service named by jexl_owner_key_service returns, else the owner's user id. */
+    static String ownerKey(ExecutionContext ec, EntityValue deployment) {
+        String keyService = SystemBinding.getPropOrEnv('jexl_owner_key_service')
+        if (keyService) {
+            Map out = ec.service.sync().name(keyService).parameters([scriptDeployment: deployment.getMap()]).disableAuthz().call()
+            if (out?.ownerKey) return out.ownerKey.toString()
         }
-        return base + [status: DELIVERED, delivery: delivery, message: (delivery?.message ?: 'Delivered.').toString()]
+        return deployment.getString('ownerUserId')
     }
 
     /** {input, inputSummary}, or an outcome with status NO_INPUT */
@@ -173,9 +270,39 @@ class ScriptDeploymentRunner {
             deployment.set('lastRunStatus', outcome.status?.toString())
             deployment.set('lastRunMessage', fitField(outcome.message?.toString()))
             deployment.set('lastRunUnits', run.units != null ? ((Number) run.units).longValue() : null)
+            // NOTE: an owner who can no longer run it switches it off; turning it back on makes the new person owner
+            if (outcome.status == OWNER_LOST) deployment.set('isActive', 'N')
             deployment.update()
+
+            boolean wasDisabled = ec.artifactExecution.disableAuthz()
+            try {
+            ec.entity.makeValue('jexl.script.UserScriptRun').setAll([scriptRunId: outcome.scriptRunId ?: ec.entity.sequencedIdPrimary('jexl.script.UserScriptRun', null, null),
+                    userScriptId: deployment.userScriptId, scriptDeploymentId: deploymentId, ownerUserId: deployment.ownerUserId,
+                    startDate: outcome.startDate ?: ec.user.nowTimestamp, endDate: ec.user.nowTimestamp, statusId: outcome.status?.toString(),
+                    errorKind: outcome.errorKind ?: (run.error instanceof Map ? ((Map) run.error).kind : null),
+                    units: run.units, elapsedMs: run.elapsedMs,
+                    readCountsJson: outcome.readCounts ? JsonOutput.toJson(outcome.readCounts) : null,
+                    deliveryOutcomesJson: outcome.deliveries != null ? JsonOutput.toJson(outcome.deliveries) : null,
+                    message: fitField(outcome.message?.toString())]).create()
+            } finally {
+                if (!wasDisabled) ec.artifactExecution.enableAuthz()
+            }
         })
     }
+
+    private static volatile long lastPruned = 0L
+
+    /** Deletes run records older than jexl_run_retention_days (default 30). */
+    static int pruneRuns(ExecutionContext ec, Timestamp now) {
+        String raw = SystemBinding.getPropOrEnv('jexl_run_retention_days')
+        int days = 30
+        try { if (raw) days = Integer.parseInt(raw.trim()) } catch (NumberFormatException ignored) { }
+        Timestamp before = new Timestamp((now ?: ec.user.nowTimestamp).time - days * 86_400_000L)
+        return ec.entity.find('jexl.script.UserScriptRun').condition('startDate', EntityCondition.LESS_THAN, before)
+                .disableAuthz().deleteAll()
+    }
+
+    static void resetForTests() { lastPruned = 0L }
 
     /**
      * The scheduled pass: every active deployment whose nextRunDate has come, each claimed (its next run date moved
@@ -203,6 +330,11 @@ class ScriptDeploymentRunner {
             recordOutcome(ec, id, outcome)
             logger.info("Script deployment ${id} ran: ${outcome.status} ${outcome.message}")
             results << ([scriptDeploymentId: id, status: outcome.status, message: outcome.message, nextRunDate: next] as Map<String, Object>)
+        }
+        // NOTE: run records are pruned at most once an hour, on a scan
+        if (System.currentTimeMillis() - lastPruned > 3_600_000L) {
+            lastPruned = System.currentTimeMillis()
+            pruneRuns(ec, scanTime)
         }
         int held = results.count { Map r -> r.status == WAITING || r.status == EXPIRED } as int
         return [ran: results.size() - held, held: held, results: results] as Map<String, Object>

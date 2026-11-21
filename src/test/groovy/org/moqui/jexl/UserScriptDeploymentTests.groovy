@@ -42,6 +42,19 @@ class UserScriptDeploymentTests extends Specification {
         // this machine's own heap and CPU must not hold the scripts under test
         System.setProperty('script_hold_heap_percent', '101')
         System.setProperty('script_hold_cpu_percent', '101')
+        ec.artifactExecution.disableAuthz()
+        [[id: 'JEXL_SCHEDULER', name: 'jexl.scheduler', group: 'JEXL_TEST_SCHEDULERS', grants: ['JEXL_SCRIPT_SCHEDULE', 'JEXL_SCRIPT_EDIT']],
+         [id: 'JEXL_EDITOR', name: 'jexl.editor', group: 'JEXL_TEST_EDITORS', grants: ['JEXL_SCRIPT_EDIT']]].each { Map u ->
+            ec.entity.makeValue('moqui.security.UserAccount').setAll([userId: u.id, username: u.name, userFullName: u.name]).createOrUpdate()
+            ec.entity.makeValue('moqui.security.UserGroup').setAll([userGroupId: u.group, description: u.group]).createOrUpdate()
+            ec.entity.makeValue('moqui.security.UserGroupMember').setAll([userGroupId: u.group, userId: u.id,
+                    fromDate: Timestamp.valueOf('2020-01-01 00:00:00')]).createOrUpdate()
+            ((List) u.grants).each { String g ->
+                ec.entity.makeValue('moqui.security.ArtifactAuthz').setAll([artifactAuthzId: "JT_${u.id.take(6)}_${g.replace("JEXL_SCRIPT_", "")}".toString(),
+                        userGroupId: u.group, artifactGroupId: g, authzTypeEnumId: 'AUTHZT_ALLOW', authzActionEnumId: 'AUTHZA_ALL']).createOrUpdate()
+            }
+        }
+        ec.artifactExecution.enableAuthz()
     }
 
     def cleanupSpec() {
@@ -50,6 +63,13 @@ class UserScriptDeploymentTests extends Specification {
         ec.entity.find('jexl.script.UserScriptDeployment').condition('scriptDeploymentId', 'like', 'USD_TEST_%').deleteAll()
         ec.entity.find('jexl.script.UserScript').condition('userScriptId', 'like', 'USS_TEST_%').deleteAll()
         ec.entity.find('moqui.test.TestEntity').condition('testMedium', 'like', 'USD_TEST_%').deleteAll()
+        ec.entity.find('jexl.script.UserScriptRun').condition('scriptDeploymentId', 'like', 'USD_TEST_%').deleteAll()
+        ec.entity.find('jexl.script.UserScriptRun').condition('scriptRunId', 'like', 'USR_TEST_%').deleteAll()
+        ec.entity.find('moqui.security.ArtifactAuthz').condition('userGroupId', 'in', ['JEXL_TEST_SCHEDULERS', 'JEXL_TEST_EDITORS']).deleteAll()
+        ec.entity.find('moqui.security.UserGroupMember').condition('userId', 'in', ['JEXL_SCHEDULER', 'JEXL_EDITOR']).deleteAll()
+        ec.entity.find('moqui.security.UserGroup').condition('userGroupId', 'in', ['JEXL_TEST_SCHEDULERS', 'JEXL_TEST_EDITORS']).deleteAll()
+        ec.entity.find('moqui.security.UserLoginHistory').condition('userId', 'in', ['JEXL_SCHEDULER', 'JEXL_EDITOR']).deleteAll()
+        ec.entity.find('moqui.security.UserAccount').condition('userId', 'in', ['JEXL_SCHEDULER', 'JEXL_EDITOR']).deleteAll()
         ec.artifactExecution.enableAuthz()
         ['script_hold_heap_percent', 'script_hold_cpu_percent', 'script_busy_service'].each { System.clearProperty(it) }
         ec.user.logoutUser()
@@ -154,7 +174,7 @@ class UserScriptDeploymentTests extends Specification {
         then:
         errors.contains("Input service ${TEST_SVC}.delete#Everything does not implement moqui.jexl.ScriptServices.read#UserScriptDeploymentInput")
         errors.contains("Delivery service ${TEST_SVC}.delete#Everything does not implement moqui.jexl.ScriptServices.deliver#UserScriptDeploymentResult")
-        out.status == 'NOT_DELIVERED'
+        out.status == 'DELIVERY_FAILED'
         out.message.contains('does not implement')
         deliveries('USD_TEST_UNMARKED_RAN').isEmpty()
     }
@@ -189,12 +209,12 @@ class UserScriptDeploymentTests extends Specification {
         EntityValue ran = deployment('USD_TEST_DUE')
 
         then:
-        first.results.find { it.scriptDeploymentId == 'USD_TEST_DUE' }.status == 'DELIVERED'
+        first.results.find { it.scriptDeploymentId == 'USD_TEST_DUE' }.status == 'OK'
         !first.results.any { it.scriptDeploymentId == 'USD_TEST_OFF' }
         !second.results.any { it.scriptDeploymentId == 'USD_TEST_DUE' }
         deliveries('USD_TEST_DUE').size() == 1
-        new JsonSlurper().parseText(deliveries('USD_TEST_DUE')[0].testLong as String) == [A: 3, B: 4]
-        ran.lastRunStatus == 'DELIVERED'
+        new JsonSlurper().parseText(deliveries('USD_TEST_DUE')[0].testLong as String).data == [A: 3, B: 4]
+        ran.lastRunStatus == 'OK'
         ran.lastRunMessage == 'Recorded.'
         (ran.lastRunUnits as long) > 0
         ran.nextRunDate == at('2030-01-02T09:00:00Z')
@@ -217,10 +237,10 @@ class UserScriptDeploymentTests extends Specification {
         call("${SVC}.run#DueUserScriptDeployments", [nowTimestamp: at('2031-01-01T09:01:00Z')])
 
         then:
-        deployment('USD_TEST_NOTHING').lastRunStatus == 'NOTHING_TO_DELIVER'
+        deployment('USD_TEST_NOTHING').lastRunStatus == 'NOTHING_TO_SEND'
         deployment('USD_TEST_NOINPUT').lastRunStatus == 'NO_INPUT'
         deployment('USD_TEST_NOINPUT').lastRunMessage == 'No finished result to read yet.'
-        deployment('USD_TEST_REFUSED').lastRunStatus == 'NOT_DELIVERED'
+        deployment('USD_TEST_REFUSED').lastRunStatus == 'DELIVERY_FAILED'
         deployment('USD_TEST_REFUSED').lastRunMessage.contains('The endpoint refused it.')
         deployment('USD_TEST_MISSING').lastRunStatus == 'SCRIPT_MISSING'
         ['USD_TEST_NOTHING', 'USD_TEST_NOINPUT', 'USD_TEST_MISSING'].every { deliveries(it).isEmpty() }
@@ -266,5 +286,122 @@ class UserScriptDeploymentTests extends Specification {
         on.ok
         on.scriptResult == 2
     }
-}
 
+    def "aRunRecordsEveryStep"() {
+        given:
+        storeScript('USS_TEST_BACK', BACKORDERS)
+        storeDeployment('USD_TEST_RECORD', 'USS_TEST_BACK', "${TEST_SVC}.deliver#ToTestEntity")
+        dueAt('USD_TEST_RECORD', at('2033-01-01T09:00:00Z'))
+
+        when:
+        call("${SVC}.run#DueUserScriptDeployments", [nowTimestamp: at('2033-01-01T09:01:00Z')])
+        List<EntityValue> runs = ec.entity.find('jexl.script.UserScriptRun').condition('scriptDeploymentId', 'USD_TEST_RECORD').useCache(false).list()
+
+        then:
+        runs.size() == 1
+        runs[0].statusId == 'OK'
+        runs[0].ownerUserId == ec.user.userId
+        (runs[0].units as long) > 0
+        runs[0].startDate != null && runs[0].endDate != null
+        new JsonSlurper().parseText(runs[0].deliveryOutcomesJson as String)[0].outcome == 'OK'
+    }
+
+    def "oneFailedDeliveryIsPartial"() {
+        given:
+        storeScript('USS_TEST_BACK', BACKORDERS)
+        call("${SVC}.store#UserScriptDeployment", [scriptDeploymentId: 'USD_TEST_PARTIAL', userScriptId: 'USS_TEST_BACK',
+                cronExpression: '0 0 9 * * ?', timeZone: 'UTC', inputServiceName: "${TEST_SVC}.read#Orders",
+                deliveries: [[deliveryServiceName: "${TEST_SVC}.deliver#ToTestEntity"], [deliveryServiceName: "${TEST_SVC}.deliver#Refused"]]])
+        assert !ec.message.hasError(), ec.message.errorsString
+        dueAt('USD_TEST_PARTIAL', at('2034-01-01T09:00:00Z'))
+
+        when:
+        call("${SVC}.run#DueUserScriptDeployments", [nowTimestamp: at('2034-01-01T09:01:00Z')])
+        List<EntityValue> sent = ec.entity.find('jexl.script.UserScriptDeploymentDelivery').condition('scriptDeploymentId', 'USD_TEST_PARTIAL')
+                .orderBy('deliverySeqId').useCache(false).list()
+
+        then:
+        deployment('USD_TEST_PARTIAL').lastRunStatus == 'DELIVERY_PARTIAL'
+        sent*.lastOutcome == ['OK', 'FAILED']
+        sent[1].lastMessage.contains('The endpoint refused it.')
+        deliveries('USD_TEST_PARTIAL').size() == 1
+        !ec.message.hasError()
+    }
+
+    def "aDisabledOwnerStopsTheDeployment"() {
+        given:
+        storeScript('USS_TEST_BACK', BACKORDERS)
+        storeDeployment('USD_TEST_OWNER', 'USS_TEST_BACK', "${TEST_SVC}.deliver#ToTestEntity")
+        deployment('USD_TEST_OWNER').set('ownerUserId', 'JEXL_SCHEDULER').update()
+        ec.entity.find('moqui.security.UserAccount').condition('userId', 'JEXL_SCHEDULER').one().set('disabled', 'Y').update()
+        dueAt('USD_TEST_OWNER', at('2035-01-01T09:00:00Z'))
+
+        when:
+        call("${SVC}.run#DueUserScriptDeployments", [nowTimestamp: at('2035-01-01T09:01:00Z')])
+        EntityValue stopped = deployment('USD_TEST_OWNER')
+
+        then:
+        stopped.lastRunStatus == 'OWNER_LOST'
+        stopped.isActive == 'N'
+        deliveries('USD_TEST_OWNER').isEmpty()
+
+        cleanup:
+        ec.entity.find('moqui.security.UserAccount').condition('userId', 'JEXL_SCHEDULER').one().set('disabled', 'N').update()
+    }
+
+    def "anOwnerWithoutTheSchedulePermissionStopsTheDeployment"() {
+        given:
+        storeScript('USS_TEST_BACK', BACKORDERS)
+        storeDeployment('USD_TEST_NOPERM', 'USS_TEST_BACK', "${TEST_SVC}.deliver#ToTestEntity")
+        deployment('USD_TEST_NOPERM').set('ownerUserId', 'JEXL_EDITOR').update()
+        dueAt('USD_TEST_NOPERM', at('2035-02-01T09:00:00Z'))
+
+        when:
+        call("${SVC}.run#DueUserScriptDeployments", [nowTimestamp: at('2035-02-01T09:01:00Z')])
+
+        then:
+        deployment('USD_TEST_NOPERM').lastRunStatus == 'OWNER_LOST'
+        deployment('USD_TEST_NOPERM').isActive == 'N'
+    }
+
+    def "editingAScheduledScriptMovesOwnership"() {
+        given:
+        storeScript('USS_TEST_OWNED', BACKORDERS)
+        storeDeployment('USD_TEST_OWNED', 'USS_TEST_OWNED', "${TEST_SVC}.deliver#ToTestEntity")
+
+        when:
+        ec.user.internalLoginUser('jexl.scheduler')
+        call("${SVC}.store#UserScript", [userScriptId: 'USS_TEST_OWNED', scriptName: 'USS_TEST_OWNED', scriptBody: BACKORDERS + ' '])
+        String schedulerErrors = ec.message.errorsString
+        ec.message.clearErrors()
+        String ownerAfterScheduler = deployment('USD_TEST_OWNED').ownerUserId
+        ec.user.internalLoginUser('jexl.editor')
+        call("${SVC}.store#UserScript", [userScriptId: 'USS_TEST_OWNED', scriptName: 'USS_TEST_OWNED', scriptBody: BACKORDERS + '  '])
+        String editorErrors = ec.message.errorsString
+        ec.message.clearErrors()
+
+        then:
+        schedulerErrors == ''
+        ownerAfterScheduler == 'JEXL_SCHEDULER'
+        editorErrors.contains('this script runs on a schedule owned by jexl.scheduler')
+        deployment('USD_TEST_OWNED').ownerUserId == 'JEXL_SCHEDULER'
+
+        cleanup:
+        ec.user.logoutUser()
+        ec.user.loginUser('john.doe', 'moqui')
+    }
+
+    def "oldRunsArePruned"() {
+        given:
+        Timestamp now = at('2036-01-31T00:00:00Z')
+        ec.entity.makeValue('jexl.script.UserScriptRun').setAll([scriptRunId: 'USR_TEST_OLD', startDate: at('2035-12-31T00:00:00Z')]).create()
+        ec.entity.makeValue('jexl.script.UserScriptRun').setAll([scriptRunId: 'USR_TEST_NEW', startDate: at('2036-01-02T00:00:00Z')]).create()
+
+        when:
+        ScriptDeploymentRunner.pruneRuns(ec, now)
+
+        then:
+        ec.entity.find('jexl.script.UserScriptRun').condition('scriptRunId', 'USR_TEST_OLD').useCache(false).one() == null
+        ec.entity.find('jexl.script.UserScriptRun').condition('scriptRunId', 'USR_TEST_NEW').useCache(false).one() != null
+    }
+}

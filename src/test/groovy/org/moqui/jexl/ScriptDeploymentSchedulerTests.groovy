@@ -92,10 +92,10 @@ class ScriptDeploymentSchedulerTests extends Specification {
         then:
         first.ran == 1
         second.ran == 0
-        deployment.lastRunStatus == 'DELIVERED'
+        deployment.lastRunStatus == 'OK'
         deployment.nextRunDate == Timestamp.from(Instant.parse('2026-06-03T09:00:00Z'))
         deliveries.size() == 1
-        deliveries[0].testLong == '2'
+        new groovy.json.JsonSlurper().parseText(deliveries[0].testLong as String).summary == '2'
     }
 
     def "run never throws, so the scheduled executor never drops it"() {

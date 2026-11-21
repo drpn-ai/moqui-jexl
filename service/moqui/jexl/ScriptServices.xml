@@ -113,6 +113,25 @@ along with this software (see the LICENSE.md file). If not, see
                 <set field="notes" from="trial.notes"/>
             </else></if>
 
+            <!-- a change to what a schedule someone else owns reads or runs makes the editor its owner, so it needs JEXL_SCRIPT_SCHEDULE -->
+            <if condition="userScriptId"><script><![CDATA[
+                def before = ec.entity.find('jexl.script.UserScript').condition('userScriptId', userScriptId).disableAuthz().useCache(false).one()
+                boolean changed = before != null && (before.scriptBody != scriptBody || (before.readSpecJson ?: null) != (readSpecJson ?: null) ||
+                        before.scriptProfile != checked.profile)
+                if (changed) {
+                    def others = ec.entity.find('jexl.script.UserScriptDeployment').condition('userScriptId', userScriptId)
+                            .condition('isActive', 'Y').condition('ownerUserId', org.moqui.entity.EntityCondition.NOT_EQUAL, ec.user.userId)
+                            .disableAuthz().useCache(false).list()
+                    if (others) {
+                        if (!ec.user.userId || !org.moqui.jexl.ScriptDeploymentRunner.maySchedule(ec, ec.user.userId)) {
+                            def owner = ec.entity.find('moqui.security.UserAccount').condition('userId', others[0].ownerUserId).disableAuthz().one()
+                            ec.message.addError("Not saved: this script runs on a schedule owned by ${owner?.username ?: others[0].ownerUserId}, and changing it needs permission to schedule scripts.".toString())
+                        } else {
+                            others.each { it.set('ownerUserId', ec.user.userId); it.update() }
+                        }
+                    }
+                }
+            ]]></script><check-errors/></if>
             <service-call name="store#jexl.script.UserScript" out-map="context"
                     in-map="[userScriptId:userScriptId, scriptName:scriptName, description:description, scriptProfile:checked.profile,
                         scriptBody:scriptBody, sampleInputJson:sampleInputJson, readSpecJson:readSpecJson ?: null,
@@ -262,26 +281,34 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
     </service>
     <service verb="deliver" noun="UserScriptDeploymentResult" type="interface">
-        <description>Delivers what a deployment's script returned (never empty). Called by the scheduler with no user;
-            an error it adds marks the run NOT_DELIVERED.</description>
+        <description>Delivers what a deployment's script returned (never empty), for one of the deployment's
+            deliveries. An error it adds marks this delivery FAILED; the deployment's other deliveries still run.</description>
         <in-parameters>
             <parameter name="scriptDeployment" type="Map" required="true"/>
-            <parameter name="scriptResult" type="Object" required="true"/>
+            <parameter name="delivery" type="Map"><description>The delivery row, with its parametersJson parsed as parameters.</description></parameter>
+            <parameter name="scriptResult" type="Object" required="true"><description>The result contract: {summary, files, data}.</description></parameter>
+            <parameter name="files" type="List"><description>[{name, contentType: 'text/csv', contentBytes}], the result's files rendered.</description></parameter>
+            <parameter name="scriptRunId"/>
         </in-parameters>
-        <out-parameters><parameter name="message"><description>Recorded as the run's message.</description></parameter></out-parameters>
+        <out-parameters>
+            <parameter name="outcome"><description>OK (the default), TOO_LARGE or FAILED.</description></parameter>
+            <parameter name="message"><description>Recorded as the delivery's message.</description></parameter>
+        </out-parameters>
     </service>
 
 
     <service verb="store" noun="UserScriptDeployment">
         <description>Creates or updates a deployment after checking its script, cron, time zone and services, and sets
-            its next run date (none while it is switched off).</description>
+            its next run date (none while it is switched off). Whoever stores it becomes its owner: the user its runs read
+            as, re-checked at every run. deliveries replaces all of its deliveries; deliveryServiceName alone is one.</description>
         <in-parameters>
             <parameter name="scriptDeploymentId"/>
             <parameter name="userScriptId" required="true"/>
             <parameter name="cronExpression" required="true"/>
             <parameter name="timeZone"/>
             <parameter name="inputServiceName"/>
-            <parameter name="deliveryServiceName" required="true"/>
+            <parameter name="deliveryServiceName"/>
+            <parameter name="deliveries" type="List"><description>[{deliveryServiceName, parameters (Map) or parametersJson, isActive}]</description></parameter>
             <parameter name="isActive" default-value="Y"/>
         </in-parameters>
         <out-parameters>
@@ -303,8 +330,12 @@ along with this software (see the LICENSE.md file). If not, see
             </script>
             <if condition="inputServiceName &amp;&amp; !org.moqui.jexl.ScriptDeploymentRunner.implementsInterface(ec, inputServiceName, org.moqui.jexl.ScriptDeploymentRunner.INPUT_INTERFACE)">
                 <message error="true">Input service ${inputServiceName} does not implement ${org.moqui.jexl.ScriptDeploymentRunner.INPUT_INTERFACE}.</message></if>
-            <if condition="!org.moqui.jexl.ScriptDeploymentRunner.implementsInterface(ec, deliveryServiceName, org.moqui.jexl.ScriptDeploymentRunner.DELIVERY_INTERFACE)">
-                <message error="true">Delivery service ${deliveryServiceName} does not implement ${org.moqui.jexl.ScriptDeploymentRunner.DELIVERY_INTERFACE}.</message></if>
+            <set field="deliveryList" from="deliveries ?: (deliveryServiceName ? [[deliveryServiceName:deliveryServiceName]] : [])"/>
+            <if condition="!deliveryList"><message error="true">A deployment needs at least one delivery.</message></if>
+            <iterate list="deliveryList" entry="oneDelivery">
+                <if condition="!org.moqui.jexl.ScriptDeploymentRunner.implementsInterface(ec, oneDelivery.deliveryServiceName, org.moqui.jexl.ScriptDeploymentRunner.DELIVERY_INTERFACE)">
+                    <message error="true">Delivery service ${oneDelivery.deliveryServiceName} does not implement ${org.moqui.jexl.ScriptDeploymentRunner.DELIVERY_INTERFACE}.</message></if>
+            </iterate>
             <check-errors/>
 
             <set field="nextRunDate" from="isActive == 'Y' ? org.moqui.jexl.ScriptDeploymentRunner.nextRunDate(cronExpression, timeZone, ec.user.nowTimestamp) : null"/>
@@ -312,9 +343,14 @@ along with this software (see the LICENSE.md file). If not, see
                     in-map="[scriptDeploymentId:scriptDeploymentId, userScriptId:userScriptId, cronExpression:cronExpression.trim(),
                         timeZone:timeZone, inputServiceName:inputServiceName, ownerUserId:ec.user.userId,
                         isActive:isActive, nextRunDate:nextRunDate]"/>
-            <!-- NOTE: one delivery for now (seq 01); several deliveries per deployment come with the deliveries list -->
-            <service-call name="store#jexl.script.UserScriptDeploymentDelivery"
-                    in-map="[scriptDeploymentId:scriptDeploymentId, deliverySeqId:'01', deliveryServiceName:deliveryServiceName, isActive:'Y']"/>
+            <entity-delete-by-condition entity-name="jexl.script.UserScriptDeploymentDelivery">
+                <econdition field-name="scriptDeploymentId"/></entity-delete-by-condition>
+            <iterate list="deliveryList" entry="oneDelivery">
+                <service-call name="create#jexl.script.UserScriptDeploymentDelivery" in-map="[scriptDeploymentId:scriptDeploymentId,
+                        deliverySeqId:String.format('%02d', oneDelivery_index + 1), deliveryServiceName:oneDelivery.deliveryServiceName,
+                        parametersJson:(oneDelivery.parameters ? groovy.json.JsonOutput.toJson(oneDelivery.parameters) : oneDelivery.parametersJson),
+                        isActive:(oneDelivery.isActive ?: 'Y')]"/>
+            </iterate>
         </actions>
     </service>
 
@@ -331,6 +367,9 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="scriptResult" type="Object"><description>What the script returned (named so, since result is taken in XML actions).</description></parameter>
             <parameter name="run" type="Map"><description>{ok, profile, result, units, elapsedMs, logs, error}</description></parameter>
             <parameter name="inputSummary" type="Map"/>
+            <parameter name="normalizedResult" type="Map"/>
+            <parameter name="readCounts" type="Map"/>
+            <parameter name="deliveries" type="List"/>
         </out-parameters>
         <actions>
             <entity-find-one entity-name="jexl.script.UserScriptDeployment" value-field="deployment"/>
@@ -346,6 +385,9 @@ along with this software (see the LICENSE.md file). If not, see
             <set field="scriptResult" from="outcome.result"/>
             <set field="run" from="outcome.run"/>
             <set field="inputSummary" from="outcome.inputSummary"/>
+            <set field="normalizedResult" from="outcome.normalized"/>
+            <set field="readCounts" from="outcome.readCounts"/>
+            <set field="deliveries" from="outcome.deliveries"/>
         </actions>
     </service>
 
