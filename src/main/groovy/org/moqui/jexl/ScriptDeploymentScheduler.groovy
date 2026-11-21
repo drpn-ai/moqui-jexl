@@ -23,7 +23,7 @@ import java.sql.Timestamp
 
 /**
  * Runs the due user script deployments on the factory's scheduled executor, the way ScheduledJobRunner runs service
- * jobs: ScriptDeploymentToolFactory schedules it every script_deployment_check_seconds. Each pass calls
+ * jobs: ScriptDeploymentToolFactory schedules it every jexl_deployment_check_seconds. Each pass calls
  * run#DueUserScriptDeployments, which claims a deployment under a row lock before running it, so servers sharing a
  * database never deliver the same run twice.
  */

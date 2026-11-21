@@ -23,7 +23,7 @@ import org.slf4j.LoggerFactory
 
 /**
  * Starts the ScriptDeploymentScheduler when Moqui starts, as ServiceFacadeImpl starts ScheduledJobRunner: every
- * script_deployment_check_seconds (60; 0 turns it off) after a 120 second initial delay. The tool is the scheduler,
+ * jexl_deployment_check_seconds (60; 0 turns it off) after a 120 second initial delay. The tool is the scheduler,
  * so ec.factory.getTool('ScriptDeployment', ScriptDeploymentScheduler.class).runDue(null) runs one pass by hand.
  */
 @CompileStatic
@@ -46,19 +46,19 @@ class ScriptDeploymentToolFactory implements ToolFactory<ScriptDeploymentSchedul
             logger.info("Starting the script deployment scheduler, checking every ${checkSeconds} seconds after a ${INITIAL_DELAY_SECONDS} second initial delay")
             ecfi.scheduleAtFixedRate(scheduler, INITIAL_DELAY_SECONDS, checkSeconds)
         } else {
-            logger.warn('Not starting the script deployment scheduler (script_deployment_check_seconds is 0)')
+            logger.warn('Not starting the script deployment scheduler (jexl_deployment_check_seconds is 0)')
         }
     }
 
     @Override ScriptDeploymentScheduler getInstance(Object... parameters) { scheduler }
 
     static long checkSeconds() {
-        String value = SystemBinding.getPropOrEnv('script_deployment_check_seconds')
+        String value = SystemBinding.getPropOrEnv('jexl_deployment_check_seconds')
         if (!value) return 60L
         try {
             return Math.max(0L, Long.parseLong(value.trim()))
         } catch (NumberFormatException ignored) {
-            logger.warn("script_deployment_check_seconds '${value}' is not a whole number, using 60")
+            logger.warn("jexl_deployment_check_seconds '${value}' is not a whole number, using 60")
             return 60L
         }
     }

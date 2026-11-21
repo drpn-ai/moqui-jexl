@@ -19,20 +19,20 @@ import static org.junit.jupiter.api.Assertions.assertEquals
 import static org.junit.jupiter.api.Assertions.assertNull
 import static org.junit.jupiter.api.Assertions.assertTrue
 
-/** User scripts take last priority: heap and CPU hold them back. UserScriptDeploymentTests covers script_busy_service. */
+/** User scripts take last priority: heap and CPU hold them back. UserScriptDeploymentTests covers jexl_busy_service. */
 class UserScriptLoadGateTests extends Specification {
     private static final Map CALM = [heapPercent: 40, liveHeapPercent: 60, cpuPercent: 30]
     private final Closure original = ScriptLoadGate.probe
 
     def cleanup() {
         ScriptLoadGate.probe = original
-        System.clearProperty('script_hold_heap_percent')
-        System.clearProperty('script_hold_cpu_percent')
+        System.clearProperty('jexl_hold_heap_percent')
+        System.clearProperty('jexl_hold_cpu_percent')
     }
 
     private static void holdAt(int heapPercent, int cpuPercent) {
-        System.setProperty('script_hold_heap_percent', heapPercent.toString())
-        System.setProperty('script_hold_cpu_percent', cpuPercent.toString())
+        System.setProperty('jexl_hold_heap_percent', heapPercent.toString())
+        System.setProperty('jexl_hold_cpu_percent', cpuPercent.toString())
     }
 
     private static void load(Map readings) { ScriptLoadGate.probe = { -> readings as Map<String, Object> } }

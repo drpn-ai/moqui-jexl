@@ -367,7 +367,7 @@ class ScriptDeploymentRunner {
 
     /**
      * The server is busy: leave this due run for the next scan (WAITING), or once its window has passed skip it
-     * (EXPIRED), never forced. The window ends at due + script_max_wait_minutes, or at the cron's next run if sooner.
+     * (EXPIRED), never forced. The window ends at due + jexl_max_wait_minutes, or at the cron's next run if sooner.
      */
     static Map<String, Object> holdForLoad(ExecutionContext ec, EntityValue deployment, Timestamp now, String reason) {
         String id = deployment.scriptDeploymentId

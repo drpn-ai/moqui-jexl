@@ -48,6 +48,7 @@ class ScriptLibrary {
             [name: 'split(s, sep)', help: 'text s split on sep into a list'],
             [name: 'join(list, sep)', help: 'the list as one text, sep between items'],
             [name: 'keys(map) / vals(map)', help: "a map's keys / values as a list"],
+            [name: 'push(list, item)', help: 'adds item to the end of a list made with [...], in place (cheap); returns the list'],
             [name: 'pluck(list, field)', help: 'field from each map in the list'],
             [name: 'where(list, field, value)', help: 'the maps in the list whose field equals value; size(...) counts them'],
             [name: 'sum(list) / sum(list, field)', help: 'the total of the numbers, or of field across maps'],
@@ -163,6 +164,16 @@ class ScriptLibrary {
         Map entries = asMap(map, 'vals')
         ScriptBudget.charge(entries.size())
         return new ArrayList(entries.values())
+    }
+
+    /** Appends in place for one unit, under the collection cap: building a file's rows with l = l + [row] copies the list every time. */
+    static List push(Object list, Object item) {
+        if (!(list instanceof List)) throw new LimitReached('ACCESS', 'push takes a list made with [...] (a [] literal is a fixed array).')
+        List items = (List) list
+        ScriptBudget.charge(1L)
+        ScriptBudget.checkSize(items.size() + 1)
+        items.add(item)
+        return items
     }
 
     static List pluck(Object list, Object field) {

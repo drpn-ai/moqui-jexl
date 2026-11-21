@@ -553,5 +553,36 @@ class UserScriptSupervisorTests extends Specification {
         expect:
         ScriptSupervisor.evaluate('SCRIPT', 'var s = 0; for (var i : 1..1000) { s = s + i; } s', [:]).result == 500500
     }
-}
 
+    def "pushAppendsInPlaceForOneUnit"() {
+        when:
+        Map out = ScriptSupervisor.evaluate('SCRIPT', 'var rows = [...]; for (var r : input) { fn:push(rows, [r.a, r.b]); } rows',
+                (1..5000).collect { [a: it, b: it * 2] })
+
+        then:
+        out.ok
+        out.result.size() == 5000
+        out.result[4999] == [5000, 10000]
+        (out.units as long) < 60_000L
+    }
+
+    def "pushStopsAtTheCollectionCap"() {
+        given:
+        System.setProperty('jexl_profile_SCRIPT_maxCollectionSize', '3')
+
+        when:
+        Map out = ScriptSupervisor.evaluate('SCRIPT', 'var l = [...]; for (var i : 1..5) { fn:push(l, i); } l', [:])
+
+        then:
+        !out.ok
+        out.error.kind == 'MEMORY'
+
+        cleanup:
+        System.clearProperty('jexl_profile_SCRIPT_maxCollectionSize')
+    }
+
+    def "pushOnlyTakesAList"() {
+        expect:
+        !ScriptSupervisor.evaluate('SCRIPT', "fn:push('text', 1)", [:]).ok
+    }
+}

@@ -417,7 +417,7 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="run" noun="DueUserScriptDeployments" authenticate="anonymous-all" transaction="ignore">
-        <description>Runs the deployments that are due (org.moqui.jexl.ScriptDeploymentScheduler, every script_deployment_check_seconds) and stamps each outcome
+        <description>Runs the deployments that are due (org.moqui.jexl.ScriptDeploymentScheduler, every jexl_deployment_check_seconds) and stamps each outcome
             on it; one failing never stops the others. While the server is busy a due one waits, then expires.</description>
         <in-parameters>
             <parameter name="nowTimestamp" type="Timestamp"/>

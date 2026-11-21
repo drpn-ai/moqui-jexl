@@ -25,9 +25,9 @@ import java.lang.management.MemoryType
 import java.lang.management.MemoryUsage
 
 /**
- * User scripts run last: one starts only while heap after GC is under script_hold_heap_percent (70) and process CPU is
- * under script_hold_cpu_percent (75); a threshold over 100 turns that check off. An application adds its own reasons
- * to wait (its job queue is full, say) with a service named in script_busy_service whose out-parameter busyReason is
+ * User scripts run last: one starts only while heap after GC is under jexl_hold_heap_percent (70) and process CPU is
+ * under jexl_hold_cpu_percent (75); a threshold over 100 turns that check off. An application adds its own reasons
+ * to wait (its job queue is full, say) with a service named in jexl_busy_service whose out-parameter busyReason is
  * text while scripts must wait and empty when they may run.
  */
 @CompileStatic
@@ -40,11 +40,11 @@ class ScriptLoadGate {
     /** {heapPercent, liveHeapPercent, cpuPercent}, null when unknown; replaced in tests */
     static Closure<Map<String, Object>> probe = { -> readLoad() }
 
-    static int holdAtHeapPercent() { intSetting('script_hold_heap_percent', 70) }
-    static int holdAtCpuPercent() { intSetting('script_hold_cpu_percent', 75) }
+    static int holdAtHeapPercent() { intSetting('jexl_hold_heap_percent', 70) }
+    static int holdAtCpuPercent() { intSetting('jexl_hold_cpu_percent', 75) }
     /** how long a due scheduled run waits for room before it is skipped */
-    static int scheduledMaxWaitMinutes() { intSetting('script_max_wait_minutes', 60) }
-    static String busyServiceName() { SystemBinding.getPropOrEnv('script_busy_service') ?: null }
+    static int scheduledMaxWaitMinutes() { intSetting('jexl_max_wait_minutes', 60) }
+    static String busyServiceName() { SystemBinding.getPropOrEnv('jexl_busy_service') ?: null }
 
     /** Why scripts must wait right now, or null when there is room for one. */
     static String busyReason(ExecutionContext ec) {
@@ -67,7 +67,7 @@ class ScriptLoadGate {
 
     static String busyMessage(String reason) { "The server is busy (${reason}), and scripts run last. Try again in a minute.".toString() }
 
-    /** The application's reason to wait, from script_busy_service; a failing check lets scripts run. */
+    /** The application's reason to wait, from jexl_busy_service; a failing check lets scripts run. */
     private static String applicationBusyReason(ExecutionContext ec) {
         String serviceName = busyServiceName()
         if (!serviceName || ec == null) return null

@@ -40,8 +40,8 @@ class ScriptDeploymentSchedulerTests extends Specification {
         }
         ec.artifactExecution.enableAuthz()
         ec.user.loginUser("john.doe", "moqui")
-        System.setProperty('script_hold_heap_percent', '101')
-        System.setProperty('script_hold_cpu_percent', '101')
+        System.setProperty('jexl_hold_heap_percent', '101')
+        System.setProperty('jexl_hold_cpu_percent', '101')
     }
 
     def cleanupSpec() {
@@ -51,7 +51,7 @@ class ScriptDeploymentSchedulerTests extends Specification {
         ec.entity.find('jexl.script.UserScript').condition('userScriptId', 'like', 'USS_SCHED_%').deleteAll()
         ec.entity.find('moqui.test.TestEntity').condition('testMedium', 'like', 'USD_SCHED_%').deleteAll()
         ec.artifactExecution.enableAuthz()
-        ['script_hold_heap_percent', 'script_hold_cpu_percent'].each { System.clearProperty(it) }
+        ['jexl_hold_heap_percent', 'jexl_hold_cpu_percent'].each { System.clearProperty(it) }
         ec.user.logoutUser()
         ec.destroy()
     }

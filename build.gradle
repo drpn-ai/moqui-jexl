@@ -58,7 +58,7 @@ test {
     systemProperty 'moqui.conf', projectDir.absolutePath + '/src/test/resources/conf/JexlTestConf.xml'
     systemProperty 'moqui.init.static', 'true'
     // the tests run each pass by hand (ScriptDeploymentScheduler.runDue), so the timed scheduler stays off
-    systemProperty 'script_deployment_check_seconds', '0'
+    systemProperty 'jexl_deployment_check_seconds', '0'
     // an in-memory Bitronix journal, so a test JVM never touches runtime/txlog
     systemProperty 'bitronix.tm.journal', 'null'
     systemProperty 'bitronix.tm.serverId', 'moqui-jexl-test'

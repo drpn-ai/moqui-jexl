@@ -29,8 +29,8 @@ class ReadStepTests extends Specification {
     def setupSpec() {
         ec = Moqui.getExecutionContext()
         ec.user.loginUser('john.doe', 'moqui')
-        System.setProperty('script_hold_heap_percent', '101')
-        System.setProperty('script_hold_cpu_percent', '101')
+        System.setProperty('jexl_hold_heap_percent', '101')
+        System.setProperty('jexl_hold_cpu_percent', '101')
         ec.artifactExecution.disableAuthz()
         ec.service.sync().name("${SVC}.store#ScriptSource").parameters([sourceName: 'fixed', serviceName: FIXED]).call()
         // the owner reads through a source only with a grant on it: the test source joins JEXL_SOURCES
@@ -45,7 +45,7 @@ class ReadStepTests extends Specification {
         ec.entity.find('moqui.security.ArtifactGroupMember').condition([artifactGroupId: 'JEXL_SOURCES', artifactName: FIXED]).deleteAll()
         ec.entity.find('jexl.script.UserScript').condition('userScriptId', 'like', 'USS_READ_%').deleteAll()
         ec.artifactExecution.enableAuthz()
-        ['script_hold_heap_percent', 'script_hold_cpu_percent', 'jexl_read_timeout_ms'].each { System.clearProperty(it) }
+        ['jexl_hold_heap_percent', 'jexl_hold_cpu_percent', 'jexl_read_timeout_ms'].each { System.clearProperty(it) }
         ec.user.logoutUser()
         ec.destroy()
     }

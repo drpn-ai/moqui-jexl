@@ -48,8 +48,8 @@ class UserScriptDeploymentTests extends Specification {
         ec.artifactExecution.enableAuthz()
         ec.user.loginUser("john.doe", "moqui")
         // this machine's own heap and CPU must not hold the scripts under test
-        System.setProperty('script_hold_heap_percent', '101')
-        System.setProperty('script_hold_cpu_percent', '101')
+        System.setProperty('jexl_hold_heap_percent', '101')
+        System.setProperty('jexl_hold_cpu_percent', '101')
         ec.artifactExecution.disableAuthz()
         [[id: 'JEXL_SCHEDULER', name: 'jexl.scheduler', group: 'JEXL_TEST_SCHEDULERS', grants: ['JEXL_SCRIPT_SCHEDULE', 'JEXL_SCRIPT_EDIT']],
          [id: 'JEXL_EDITOR', name: 'jexl.editor', group: 'JEXL_TEST_EDITORS', grants: ['JEXL_SCRIPT_EDIT']]].each { Map u ->
@@ -79,7 +79,7 @@ class UserScriptDeploymentTests extends Specification {
         ec.entity.find('moqui.security.UserLoginHistory').condition('userId', 'in', ['JEXL_SCHEDULER', 'JEXL_EDITOR']).deleteAll()
         ec.entity.find('moqui.security.UserAccount').condition('userId', 'in', ['JEXL_SCHEDULER', 'JEXL_EDITOR']).deleteAll()
         ec.artifactExecution.enableAuthz()
-        ['script_hold_heap_percent', 'script_hold_cpu_percent', 'script_busy_service'].each { System.clearProperty(it) }
+        ['jexl_hold_heap_percent', 'jexl_hold_cpu_percent', 'jexl_busy_service'].each { System.clearProperty(it) }
         ec.user.logoutUser()
         ec.destroy()
     }
@@ -88,7 +88,7 @@ class UserScriptDeploymentTests extends Specification {
 
     def cleanup() {
         ec.message.clearAll()
-        System.clearProperty('script_busy_service')
+        System.clearProperty('jexl_busy_service')
         ec.artifactExecution.enableAuthz()
     }
 
@@ -261,7 +261,7 @@ class UserScriptDeploymentTests extends Specification {
         storeScript('USS_TEST_BACK', BACKORDERS)
         storeDeployment('USD_TEST_BUSY', 'USS_TEST_BACK', "${TEST_SVC}.deliver#ToTestEntity")
         dueAt('USD_TEST_BUSY', at('2032-01-01T09:00:00Z'))
-        System.setProperty('script_busy_service', "${TEST_SVC}.check#QueueFull")
+        System.setProperty('jexl_busy_service', "${TEST_SVC}.check#QueueFull")
 
         when:
         call("${SVC}.run#DueUserScriptDeployments", [nowTimestamp: at('2032-01-01T09:10:00Z')])
