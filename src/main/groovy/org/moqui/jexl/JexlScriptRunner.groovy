@@ -45,7 +45,9 @@ class JexlScriptRunner implements ScriptRunner {
         String body = ec.resource.getLocationText(location, true)
         if (body == null) throw new BaseArtifactException("No JEXL script found at ${location}")
 
-        Map<String, Object> run = ScriptSupervisor.evaluate(ScriptSupervisor.SCRIPT, body, plainValues(ec.context))
+        // NOTE: application code: its own owner slot per calling thread, and no transaction check or kill switch
+        Map<String, Object> run = ScriptSupervisor.evaluate(ScriptSupervisor.SCRIPT, body, plainValues(ec.context),
+                ".jexl ${Thread.currentThread().id}".toString(), false)
         if (!run.ok) {
             Map error = run.error as Map
             ec.message.addError("${location}${error?.line ? ' line ' + error.line : ''}: ${error?.message}".toString())

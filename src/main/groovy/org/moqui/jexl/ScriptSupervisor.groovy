@@ -30,15 +30,7 @@ import org.apache.commons.jexl3.parser.ASTNumberLiteral
 import org.apache.commons.jexl3.parser.JexlNode
 
 import java.lang.reflect.Field
-import java.util.concurrent.ArrayBlockingQueue
-import java.util.concurrent.ExecutionException
-import java.util.concurrent.Future
-import java.util.concurrent.RejectedExecutionException
-import java.util.concurrent.ThreadFactory
-import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.TimeoutException
-import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * The one place Moqui runs user-written JEXL. EXPRESSION is one expression with no loops, locals or side effects;
@@ -77,11 +69,6 @@ class ScriptSupervisor {
 
     private static JexlEngine engineFor(ScriptProfile profile) { profile.statements ? SCRIPT_ENGINE : EXPRESSION_ENGINE }
 
-    private static final AtomicInteger threadCount = new AtomicInteger()
-    /** two threads and sixteen waiting places: a burst queues briefly, then is refused, never piles onto Moqui */
-    private static final ThreadPoolExecutor POOL = new ThreadPoolExecutor(2, 2, 60L, TimeUnit.SECONDS,
-            new ArrayBlockingQueue<Runnable>(16), { Runnable task -> scriptThread(task) } as ThreadFactory)
-
     private static JexlEngine engine(JexlFeatures features) {
         return new JexlBuilder()
                 .features(features)
@@ -95,13 +82,6 @@ class ScriptSupervisor {
                 .cancellable(true)
                 .cache(512)
                 .create()
-    }
-
-    private static Thread scriptThread(Runnable task) {
-        Thread thread = new Thread(task, "user-script-${threadCount.incrementAndGet()}".toString())
-        thread.daemon = true
-        thread.priority = Thread.NORM_PRIORITY - 1
-        return thread
     }
 
     static String profileOf(Object profile) {
@@ -159,8 +139,10 @@ class ScriptSupervisor {
     /**
      * Runs the script against input (any JSON-shaped value, copied before the script sees it).
      * {ok, profile, result, units, elapsedMs, logs, error: {kind, message, line, column}}. Never throws.
+     * Runs in ScriptLane: ownerKey is whose slot it takes (null = one shared slot); userCode false is a .jexl file that
+     * ships with the application (no transaction check, no kill switch).
      */
-    static Map<String, Object> evaluate(Object profile, String body, Object input) {
+    static Map<String, Object> evaluate(Object profile, String body, Object input, String ownerKey = null, boolean userCode = true) {
         Map<String, Object> checked = validate(profile, body)
         if (!checked.ok) return notRun(checked)
         String profileName = checked.profile as String
@@ -177,9 +159,7 @@ class ScriptSupervisor {
         JexlScript script = engineFor(limits).createScript(new JexlInfo('script', 1, 1), body)
         ScriptBudget budget = new ScriptBudget(limits.units, limits.maxStringChars, limits.maxCollectionSize)
         long started = System.nanoTime()
-        Future<Object> future
-        try {
-            future = POOL.submit({ ->
+        LaneResult lane = ScriptLane.run(ownerKey, limits.timeoutMs, { ->
                 ScriptBudget.open(budget)
                 try {
                     MapContext context = new MapContext()
@@ -195,20 +175,17 @@ class ScriptSupervisor {
                 } finally {
                     ScriptBudget.close()
                 }
-            } as java.util.concurrent.Callable<Object>)
-        } catch (RejectedExecutionException ignored) {
-            return notRun(failure(profileName, 'BUSY', 'Scripts are busy right now; try again in a moment.'))
-        }
+        } as java.util.concurrent.Callable<Object>, userCode)
 
         Map<String, Object> out
-        try {
-            Object plain = future.get(limits.timeoutMs, TimeUnit.MILLISECONDS)
-            out = [ok: true, profile: profileName, result: plain, error: null] as Map<String, Object>
-        } catch (TimeoutException ignored) {
-            future.cancel(true)
-            out = failure(profileName, 'TIME', "The script ran past ${limits.timeoutMs} ms and was stopped.".toString())
-        } catch (ExecutionException e) {
-            out = failureFrom(profileName, e.cause ?: e, body, budget)
+        switch (lane.status) {
+            case 'OK': out = [ok: true, profile: profileName, result: lane.value, error: null] as Map<String, Object>; break
+            case 'TIME':
+                out = failure(profileName, 'TIME', lane.message)
+                if (lane.stuck) out.stuck = true
+                break
+            case 'FAILED': out = failureFrom(profileName, lane.error, body, budget); break
+            default: return notRun(failure(profileName, lane.status, lane.message))
         }
         out.units = budget.units
         out.elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)
@@ -318,7 +295,7 @@ class ScriptSupervisor {
     }
 
     /** Parses JSON text for an input; blank is an empty map. */
-    static Object parseInputJson(String json, String profileName = SCRIPT) {
+    static Object parseInputJson(String json, String profileName) {
         if (!json?.trim()) return [:]
         int maxChars = ScriptProfiles.get(profileOf(profileName) ?: SCRIPT).maxInputJsonChars
         if (json.length() > maxChars) throw new IllegalArgumentException("The input is more than ${maxChars} characters.".toString())

@@ -124,7 +124,7 @@ class ScriptDeploymentRunner {
         if (!inputServiceName) {
             String json = script.sampleInputJson
             try {
-                return [input: ScriptSupervisor.parseInputJson(json), inputSummary: [source: 'SAMPLE', characters: (json ?: '').length()]] as Map<String, Object>
+                return [input: ScriptSupervisor.parseInputJson(json, script.getString("scriptProfile")), inputSummary: [source: 'SAMPLE', characters: (json ?: '').length()]] as Map<String, Object>
             } catch (IllegalArgumentException e) {
                 return [status: NO_INPUT, message: "Sample input: ${e.message}".toString()] as Map<String, Object>
             }

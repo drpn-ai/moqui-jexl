@@ -18,7 +18,7 @@ import spock.lang.Specification
 /** Named limit profiles: the two built in, and the ones an application adds or tunes by setting. */
 class ScriptProfilesTests extends Specification {
     static final List<String> PROPS = ['jexl_profiles', 'jexl_profile_QUERY_units', 'jexl_profile_QUERY_maxReadRows',
-                                       'jexl_profile_SCRIPT_timeoutMs', 'jexl_profile_SCRIPT_units']
+                                       'jexl_profile_SCRIPT_timeoutMs', 'jexl_profile_SCRIPT_units', 'jexl_profile_QUERY_maxInputJsonChars']
 
     def cleanup() { PROPS.each { System.clearProperty(it) } }
 
@@ -84,5 +84,23 @@ class ScriptProfilesTests extends Specification {
         out.ok
         out.result == 6
         out.profile == 'QUERY'
+    }
+
+    def "inputJsonCapFollowsTheProfile"() {
+        given:
+        System.setProperty('jexl_profiles', 'QUERY')
+        System.setProperty('jexl_profile_QUERY_maxInputJsonChars', '10')
+
+        when:
+        ScriptSupervisor.parseInputJson('[1,2,3,4,5,6,7]', 'QUERY')
+
+        then:
+        IllegalArgumentException e = thrown()
+        e.message.contains('more than 10 characters')
+    }
+
+    def "parseInputJsonNeedsAProfile"() {
+        expect:
+        ScriptSupervisor.metaClass.respondsTo(ScriptSupervisor, 'parseInputJson', String).isEmpty()
     }
 }
