@@ -107,8 +107,9 @@ class ScriptLane {
     /**
      * Runs work on a lane thread and waits for it, at most timeoutMs. userCode false (a .jexl file that ships with the
      * application) skips the transaction check and the kill switch; the owner slot, queue and stuck handling still apply.
-     * A null ownerKey takes no owner slot (only the thread and queue caps apply), so callers without an owner never
-     * share one slot.
+     * Every user-script caller passes its owner (a user, a deployment owner); a user script that comes without one falls
+     * back to one shared slot, so a forgotten key can never lift the one-at-a-time rule. Application code without an
+     * owner takes no owner slot (the thread and queue caps still apply).
      */
     static LaneResult run(String ownerKey, long timeoutMs, Callable<Object> work, boolean userCode) {
         if (userCode && !enabled()) return LaneResult.of('DISABLED', 'Scripts are switched off on this server.')
@@ -125,7 +126,7 @@ class ScriptLane {
         }
 
         String key = ownerKey ?: '-'
-        Semaphore owner = ownerKey ? OWNERS.computeIfAbsent(ownerKey, { String k -> new Semaphore(1) }) : null
+        Semaphore owner = (ownerKey || userCode) ? OWNERS.computeIfAbsent(key, { String k -> new Semaphore(1) }) : null
         Semaphore threads = threadSlots
         long waitMs = intSetting('jexl_lane_wait_ms', 30_000)
         long deadline = System.currentTimeMillis() + waitMs

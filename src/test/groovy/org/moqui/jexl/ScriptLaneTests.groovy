@@ -190,8 +190,26 @@ class ScriptLaneTests extends Specification {
         ScriptLane.stuckCount() == 0
     }
 
-    def "aNullOwnerDoesNotSerialize"() {
+    def "applicationCodeWithoutAnOwnerDoesNotSerialize"() {
         given:
+        CountDownLatch release = new CountDownLatch(1)
+        CountDownLatch firstStarted = new CountDownLatch(1)
+
+        when:
+        Thread first = Thread.start { ScriptLane.run(null, 5_000L, { firstStarted.countDown(); release.await(); 1 } as Callable<Object>, false) }
+        firstStarted.await(2, TimeUnit.SECONDS)
+        LaneResult second = ScriptLane.run(null, 1_000L, { 2 } as Callable<Object>, false)
+        release.countDown()
+        first.join()
+
+        then:
+        second.status == 'OK'
+    }
+
+    def "aUserScriptWithoutAnOwnerFallsBackToOneSharedSlot"() {
+        given:
+        System.setProperty('jexl_lane_wait_ms', '100')
+        ScriptLane.resetForTests()
         CountDownLatch release = new CountDownLatch(1)
         CountDownLatch firstStarted = new CountDownLatch(1)
 
@@ -203,7 +221,7 @@ class ScriptLaneTests extends Specification {
         first.thread.join()
 
         then:
-        second.status == 'OK'
+        second.status == 'HELD'
         first.result.status == 'OK'
     }
 

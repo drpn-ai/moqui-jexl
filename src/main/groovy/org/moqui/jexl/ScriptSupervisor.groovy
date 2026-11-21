@@ -139,8 +139,9 @@ class ScriptSupervisor {
     /**
      * Runs the script against input (any JSON-shaped value, copied before the script sees it).
      * {ok, profile, result, units, elapsedMs, logs, error: {kind, message, line, column}}. Never throws.
-     * Runs in ScriptLane: ownerKey is whose slot it takes (null = one shared slot); userCode false is a .jexl file that
-     * ships with the application (no transaction check, no kill switch).
+     * Runs in ScriptLane: ownerKey is whose one-at-a-time slot it takes (callers pass the user or deployment owner; a
+     * user script without one shares a single slot); userCode false is a .jexl file that ships with the application
+     * (no transaction check, no kill switch, no owner slot unless it names one).
      */
     static Map<String, Object> evaluate(Object profile, String body, Object input, String ownerKey = null, boolean userCode = true) {
         Map<String, Object> checked = validate(profile, body)
@@ -197,7 +198,7 @@ class ScriptSupervisor {
      * Runs a script on its own sample input before it is saved: {ok, problems: [{rule, line, message}], notes}.
      * Refused as BAD_SAMPLE, FAILS_ON_SAMPLE, or TOO_HEAVY when the sample alone takes over half the work budget.
      */
-    static Map<String, Object> check(Object profile, String body, String sampleJson) {
+    static Map<String, Object> check(Object profile, String body, String sampleJson, String ownerKey = null) {
         if (!sampleJson?.trim()) return passed(null)
         String profileName = profileOf(profile) ?: SCRIPT
         Object sample
@@ -207,7 +208,7 @@ class ScriptSupervisor {
             return refused('BAD_SAMPLE', null, "Sample input: ${e.message}".toString())
         }
 
-        Map<String, Object> run = evaluate(profileName, body, sample)
+        Map<String, Object> run = evaluate(profileName, body, sample, ownerKey)
         Map error = run.error as Map
         if (error?.kind == 'BUSY') return passed('Scripts are busy, so the script was saved without a trial run on its sample input.')
         if (!run.ok) {

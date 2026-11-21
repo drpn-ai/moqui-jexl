@@ -109,4 +109,9 @@ matched''', sample))
         assertTrue(check('var x = 1; if (x = 2) { 1 } else { 0 }').ok as boolean, '= in a condition')
         assertTrue(check('input.orders[0].ordred').ok as boolean, 'a misspelt field that is only returned reads as empty')
     }
+
+    def "theTrialRunTakesTheSaversSlot"() {
+        expect:
+        ScriptSupervisor.check('SCRIPT', 'input.a', '{"a": 1}', 'saver-1').ok
+    }
 }
