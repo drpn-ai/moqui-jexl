@@ -88,7 +88,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="check" noun="OwnerFields">
         <description>An application's owner-field check: refuses orgTag ORG_X.</description>
-        <in-parameters><parameter name="entityName"/><parameter name="ownerFields" type="Map"/></in-parameters>
+        <in-parameters><parameter name="entityName"/><parameter name="ownerFields" type="Map"/><parameter name="existing" type="Boolean"/></in-parameters>
         <out-parameters><parameter name="problem"/></out-parameters>
         <actions><if condition="ownerFields?.orgTag == 'ORG_X'"><set field="problem" value="You may not act for ORG_X."/></if></actions>
     </service>

@@ -5,8 +5,9 @@
 - `store#UserScript` and `store#UserScriptDeployment` take `ownerFields`: fields the application added with
   `extend-entity` (an owner or organization field). A core field of the component is refused there. A run record
   (`UserScriptRun`) copies the extended fields it shares with its deployment. An existing record's owner fields never
-  change, and the setting `jexl_owner_fields_service` names an application service that approves the values (for
-  example, that the caller acts for that organization).
+  change (a stored empty value included), and the setting `jexl_owner_fields_service` names an application service
+  called on every store, create or update, with the record's effective owner values, so the application approves that
+  the caller acts for that owner.
 - The hourly run-record prune goes by the wall clock (the time records are stamped with), not the scan's own time.
 
 ## 0.2.1

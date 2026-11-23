@@ -753,4 +753,36 @@ class UserScriptDeploymentTests extends Specification {
         cleanup:
         System.clearProperty('jexl_owner_fields_service')
     }
+
+    def "anUpdateIsCheckedByTheHookEvenWithoutOwnerFields"() {
+        given:
+        call("${SVC}.store#UserScript", [userScriptId: 'USS_TEST_UPD', scriptName: 'USS_TEST_UPD', scriptBody: BACKORDERS, ownerFields: [orgTag: 'ORG_X']])
+        ec.message.clearErrors()
+        System.setProperty('jexl_owner_fields_service', "${TEST_SVC}.check#OwnerFields")
+
+        when:
+        call("${SVC}.store#UserScript", [userScriptId: 'USS_TEST_UPD', scriptName: 'USS_TEST_UPD', scriptBody: BACKORDERS + ' '])
+        String errors = ec.message.errorsString
+        ec.message.clearErrors()
+
+        then:
+        errors.contains('You may not act for ORG_X')
+        ec.entity.find('jexl.script.UserScript').condition('userScriptId', 'USS_TEST_UPD').useCache(false).one().scriptBody == BACKORDERS
+
+        cleanup:
+        System.clearProperty('jexl_owner_fields_service')
+    }
+
+    def "aStoredEmptyOwnerFieldCannotBeSetLater"() {
+        when:
+        call("${SVC}.store#UserScript", [userScriptId: 'USS_TEST_NULLOWN', scriptName: 'USS_TEST_NULLOWN', scriptBody: BACKORDERS])
+        ec.message.clearErrors()
+        call("${SVC}.store#UserScript", [userScriptId: 'USS_TEST_NULLOWN', scriptName: 'USS_TEST_NULLOWN', scriptBody: BACKORDERS, ownerFields: [orgTag: 'ORG_B']])
+        String errors = ec.message.errorsString
+        ec.message.clearErrors()
+
+        then:
+        errors.contains('cannot change orgTag')
+        ec.entity.find('jexl.script.UserScript').condition('userScriptId', 'USS_TEST_NULLOWN').useCache(false).one().orgTag == null
+    }
 }

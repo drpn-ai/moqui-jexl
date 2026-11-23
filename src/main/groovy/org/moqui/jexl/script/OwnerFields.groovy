@@ -48,21 +48,31 @@ class OwnerFields {
         return ed.getAllFieldNames().findAll { String f -> !core.contains(f) && f != 'lastUpdatedStamp' } as List<String>
     }
 
-    /** null when the owner fields may be stored on this (new or existing) record, else what is wrong. */
+    /**
+     * null when the record may be stored with these owner fields, else what is wrong. Runs on every store, with or without
+     * ownerFields: a key must be an extended field; an existing record's owner fields never change (a stored empty value
+     * included); and the application's hook (jexl_owner_fields_service) approves the effective owner values (the stored
+     * ones overlaid with the given ones) for creates and updates alike, so an update cannot reach a record its caller
+     * may not act for.
+     */
     static String problem(ExecutionContext ec, String entityName, Map ownerFields, EntityValue existing = null) {
-        if (!ownerFields) return null
+        Map given = ownerFields ?: [:]
         List<String> allowed = extended(ec, entityName)
-        String bad = ownerFields.keySet().collect { it?.toString() }.find { String k -> !allowed.contains(k) }
+        String bad = given.keySet().collect { it?.toString() }.find { String k -> !allowed.contains(k) }
         if (bad) return "ownerFields may set only fields the application added to ${entityName}, not ${bad}.".toString()
         if (existing != null) {
-            String moved = ownerFields.keySet().collect { it?.toString() }.find { String k ->
-                existing.get(k) != null && existing.get(k)?.toString() != ownerFields.get(k)?.toString()
+            String moved = given.keySet().collect { it?.toString() }.find { String k ->
+                existing.get(k)?.toString() != given.get(k)?.toString()
             }
             if (moved) return "ownerFields cannot change ${moved} of an existing ${entityName}.".toString()
         }
         String hook = SystemBinding.getPropOrEnv('jexl_owner_fields_service')
         if (hook) {
-            Map out = ec.service.sync().name(hook).parameters([entityName: entityName, ownerFields: ownerFields]).call()
+            Map<String, Object> effective = [:]
+            if (existing != null) allowed.each { String f -> effective.put(f, existing.get(f)) }
+            effective.putAll(given)
+            Map out = ec.service.sync().name(hook).parameters([entityName: entityName, ownerFields: effective,
+                    existing: existing != null]).call()
             if (ec.message.hasError()) {
                 String errors = ec.message.errorsString
                 ec.message.clearErrors()
