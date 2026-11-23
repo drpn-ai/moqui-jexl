@@ -785,4 +785,26 @@ class UserScriptDeploymentTests extends Specification {
         errors.contains('cannot change orgTag')
         ec.entity.find('jexl.script.UserScript').condition('userScriptId', 'USS_TEST_NULLOWN').useCache(false).one().orgTag == null
     }
+
+    def "anAppOwnerCheckCanStopADeployment"() {
+        given:
+        System.setProperty('jexl_owner_check_service', "${TEST_SVC}.check#DeploymentOwner")
+        storeScript('USS_TEST_BACK', BACKORDERS)
+        call("${SVC}.store#UserScriptDeployment", [scriptDeploymentId: 'USD_TEST_GONE', userScriptId: 'USS_TEST_BACK',
+                cronExpression: '0 0 9 * * ?', inputServiceName: "${TEST_SVC}.read#Orders",
+                deliveryServiceName: "${TEST_SVC}.deliver#ToTestEntity", ownerFields: [orgTag: 'ORG_GONE']])
+        dueAt('USD_TEST_GONE', at('2041-01-01T09:00:00Z'))
+
+        when:
+        call("${SVC}.run#DueUserScriptDeployments", [nowTimestamp: at('2041-01-01T09:01:00Z')])
+
+        then:
+        deployment('USD_TEST_GONE').lastRunStatus == 'OWNER_LOST'
+        deployment('USD_TEST_GONE').lastRunMessage.contains('The owner left ORG_GONE')
+        deployment('USD_TEST_GONE').isActive == 'N'
+        deliveries('USD_TEST_GONE').isEmpty()
+
+        cleanup:
+        System.clearProperty('jexl_owner_check_service')
+    }
 }

@@ -93,6 +93,13 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><if condition="ownerFields?.orgTag == 'ORG_X'"><set field="problem" value="You may not act for ORG_X."/></if></actions>
     </service>
 
+    <service verb="check" noun="DeploymentOwner">
+        <description>An application's owner check: an owner may not run deployments tagged ORG_GONE.</description>
+        <in-parameters><parameter name="scriptDeployment" type="Map"/><parameter name="ownerUserId"/></in-parameters>
+        <out-parameters><parameter name="problem"/></out-parameters>
+        <actions><if condition="scriptDeployment?.orgTag == 'ORG_GONE'"><set field="problem" value="The owner left ORG_GONE."/></if></actions>
+    </service>
+
     <service verb="check" noun="QueueFull">
         <out-parameters><parameter name="busyReason"/></out-parameters>
         <actions><set field="busyReason" value="the order queue is full"/></actions>

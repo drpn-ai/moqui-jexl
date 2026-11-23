@@ -159,6 +159,7 @@ All are read with `SystemBinding.getPropOrEnv` (a system property or an environm
 | `jexl_email_attachment_bytes` | 20971520 | past this in all, the email goes without its files (`TOO_LARGE`) |
 | `jexl_run_retention_days` | 30 | how long run records are kept |
 | `jexl_owner_key_service` | none | a service returning `ownerKey` for a deployment (the lane's one-at-a-time key), default the owner user id |
+| `jexl_owner_check_service` | none | a service (in `scriptDeployment`, `ownerUserId`; out `problem`) asked at every run whether the owner may still run it; a problem is `OWNER_LOST` (switched off) |
 | `jexl_owner_fields_service` | none | a service (in `entityName`, `ownerFields` = the effective values, `existing`; out `problem`) called on every store, create or update, that approves the record's owner values |
 | `jexl_busy_service` | none | a service whose `busyReason` out-parameter adds your app's own reason to wait |
 | `jexl_hold_heap_percent` | 70 | user scripts wait while heap after GC is at or over this (over 100 turns it off) |

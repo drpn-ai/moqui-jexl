@@ -105,7 +105,7 @@ class ScriptDeploymentRunner {
             return [status: SCRIPT_MISSING, message: 'The script was deleted or switched off.', startDate: started] as Map<String, Object>
         }
         String ownerUserId = deployment.ownerUserId
-        Map<String, Object> problem = ownerProblem(ec, ownerUserId)
+        Map<String, Object> problem = ownerProblem(ec, ownerUserId, deployment)
         if (problem) return problem + [startDate: started]
         String ownerKey = ownerKey(ec, deployment)
         ScriptProfile profile = ScriptProfiles.get(script.getString('scriptProfile') ?: ScriptProfiles.SCRIPT)
@@ -227,7 +227,7 @@ class ScriptDeploymentRunner {
      * no owner, missing, disabled for good, terminated, or no longer allowed to schedule. HELD (tried again next time):
      * a temporary lockout after failed logins, which anyone who knows the username can cause.
      */
-    static Map<String, Object> ownerProblem(ExecutionContext ec, String userId) {
+    static Map<String, Object> ownerProblem(ExecutionContext ec, String userId, EntityValue deployment = null) {
         if (!userId) return lost('The deployment has no owner.')
         EntityValue account = ec.entity.find('moqui.security.UserAccount').condition('userId', userId).useCache(false).disableAuthz().one()
         if (account == null) return lost("The owner ${userId} no longer exists, so the deployment was switched off.")
@@ -242,6 +242,15 @@ class ScriptDeploymentRunner {
             return lost("The owner ${account.username} is disabled, so the deployment was switched off.")
         }
         if (!maySchedule(ec, userId)) return lost("The owner ${account.username} may no longer schedule scripts, so the deployment was switched off.")
+        // NOTE: the application's own rule (e.g. the owner still acts for the deployment's organization)
+        String hook = SystemBinding.getPropOrEnv('jexl_owner_check_service')
+        if (hook && deployment != null) {
+            boolean hadError = ec.message.hasError()
+            Map out = ec.service.sync().name(hook).parameters([scriptDeployment: deployment.getMap(), ownerUserId: userId]).disableAuthz().call()
+            String said = !hadError && ec.message.hasError() ? ec.message.errorsString : out?.problem?.toString()
+            if (!hadError) ec.message.clearErrors()
+            if (said) return lost("${said} The deployment was switched off.")
+        }
         return null
     }
 

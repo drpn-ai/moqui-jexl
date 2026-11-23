@@ -8,6 +8,8 @@
   change (a stored empty value included), and the setting `jexl_owner_fields_service` names an application service
   called on every store, create or update, with the record's effective owner values, so the application approves that
   the caller acts for that owner.
+- The setting `jexl_owner_check_service` names an application service asked at every run whether the owner may still
+  run the deployment (for example, still a member of its organization); a problem is `OWNER_LOST`, switched off.
 - The hourly run-record prune goes by the wall clock (the time records are stamped with), not the scan's own time.
 
 ## 0.2.1
