@@ -10,6 +10,8 @@
   the caller acts for that owner.
 - The setting `jexl_owner_check_service` names an application service asked at every run whether the owner may still
   run the deployment (for example, still a member of its organization); a problem is `OWNER_LOST`, switched off.
+- Unset, `jexl_deployment_check_seconds` follows Moqui's scheduler switch: with `scheduled_job_check_time` 0 the
+  deployment scheduler does not start (a set value still wins).
 - The hourly run-record prune goes by the wall clock (the time records are stamped with), not the scan's own time.
 
 ## 0.2.1

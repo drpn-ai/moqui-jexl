@@ -23,7 +23,8 @@ import org.slf4j.LoggerFactory
 
 /**
  * Starts the ScriptDeploymentScheduler when Moqui starts, as ServiceFacadeImpl starts ScheduledJobRunner: every
- * jexl_deployment_check_seconds (60; 0 turns it off) after a 120 second initial delay. The tool is the scheduler,
+ * jexl_deployment_check_seconds (60; 0 turns it off; unset, it is off when scheduled_job_check_time is 0, Moqui's own
+ * scheduler switch) after a 120 second initial delay. The tool is the scheduler,
  * so ec.factory.getTool('ScriptDeployment', ScriptDeploymentScheduler.class).runDue(null) runs one pass by hand.
  */
 @CompileStatic
@@ -54,7 +55,8 @@ class ScriptDeploymentToolFactory implements ToolFactory<ScriptDeploymentSchedul
 
     static long checkSeconds() {
         String value = SystemBinding.getPropOrEnv('jexl_deployment_check_seconds')
-        if (!value) return 60L
+        // Unset, it follows Moqui's own scheduler switch: an instance with scheduled jobs off runs no deployments either.
+        if (!value) return SystemBinding.getPropOrEnv('scheduled_job_check_time')?.trim() == '0' ? 0L : 60L
         try {
             return Math.max(0L, Long.parseLong(value.trim()))
         } catch (NumberFormatException ignored) {

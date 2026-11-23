@@ -71,6 +71,31 @@ class ScriptDeploymentSchedulerTests extends Specification {
         ScriptDeploymentToolFactory.checkSeconds() == 0L
     }
 
+    def "unset, the timer follows Moqui's scheduler switch; set, the setting wins"() {
+        given:
+        String saved = System.getProperty('jexl_deployment_check_seconds')
+        String savedJobs = System.getProperty('scheduled_job_check_time')
+
+        when:
+        System.clearProperty('jexl_deployment_check_seconds')
+        System.setProperty('scheduled_job_check_time', '0')
+        long off = ScriptDeploymentToolFactory.checkSeconds()
+        System.setProperty('scheduled_job_check_time', '60')
+        long on = ScriptDeploymentToolFactory.checkSeconds()
+        System.setProperty('jexl_deployment_check_seconds', '30')
+        System.setProperty('scheduled_job_check_time', '0')
+        long explicit = ScriptDeploymentToolFactory.checkSeconds()
+
+        then:
+        off == 0L
+        on == 60L
+        explicit == 30L
+
+        cleanup:
+        if (saved == null) System.clearProperty('jexl_deployment_check_seconds') else System.setProperty('jexl_deployment_check_seconds', saved)
+        if (savedJobs == null) System.clearProperty('scheduled_job_check_time') else System.setProperty('scheduled_job_check_time', savedJobs)
+    }
+
     def "a pass runs a due deployment once, from a thread of its own with no user"() {
         given:
         ec.service.sync().name("${SVC}.store#UserScript").parameters([userScriptId: 'USS_SCHED_1', scriptName: 'count',

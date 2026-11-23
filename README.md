@@ -165,7 +165,7 @@ All are read with `SystemBinding.getPropOrEnv` (a system property or an environm
 | `jexl_hold_heap_percent` | 70 | user scripts wait while heap after GC is at or over this (over 100 turns it off) |
 | `jexl_hold_cpu_percent` | 75 | the same for process CPU |
 | `jexl_max_wait_minutes` | 60 | how long a due scheduled run waits on a busy server before it expires |
-| `jexl_deployment_check_seconds` | 60 | how often due deployments run; 0 turns the scheduler off |
+| `jexl_deployment_check_seconds` | 60 | how often due deployments run; 0 turns the scheduler off; unset, it is off when `scheduled_job_check_time` is 0 |
 
 A profile's memory check defaults to 512 bytes per unit of its work budget (JEXL allocates about 300 to 400 bytes per
 unit in real scripts, garbage included).
