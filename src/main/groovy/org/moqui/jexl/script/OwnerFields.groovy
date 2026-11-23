@@ -15,13 +15,18 @@ package org.moqui.jexl.script
 
 import groovy.transform.CompileStatic
 import org.moqui.context.ExecutionContext
+import org.moqui.entity.EntityValue
+import org.moqui.util.SystemBinding
 import org.moqui.impl.entity.EntityDefinition
 import org.moqui.impl.entity.EntityFacadeImpl
 
 /**
  * Fields an application adds to the jexl.script entities with extend-entity (an owner or organization field, say).
- * The store services take them as ownerFields; a core field of the component can never be set that way. A run record
- * copies the extended fields it shares with its deployment.
+ * The store services take them as ownerFields; a core field of the component can never be set that way, an existing
+ * record's owner fields never change (no moving a script to another owner), and the application may approve the values
+ * through the service named by the setting jexl_owner_fields_service (in entityName, ownerFields; out problem), for
+ * example "the caller acts for this organization". A run record copies the extended fields it shares with its
+ * deployment.
  */
 @CompileStatic
 class OwnerFields {
@@ -43,11 +48,28 @@ class OwnerFields {
         return ed.getAllFieldNames().findAll { String f -> !core.contains(f) && f != 'lastUpdatedStamp' } as List<String>
     }
 
-    /** null when every key is an extended field of the entity, else what is wrong. */
-    static String problem(ExecutionContext ec, String entityName, Map ownerFields) {
+    /** null when the owner fields may be stored on this (new or existing) record, else what is wrong. */
+    static String problem(ExecutionContext ec, String entityName, Map ownerFields, EntityValue existing = null) {
         if (!ownerFields) return null
         List<String> allowed = extended(ec, entityName)
         String bad = ownerFields.keySet().collect { it?.toString() }.find { String k -> !allowed.contains(k) }
-        return bad ? "ownerFields may set only fields the application added to ${entityName}, not ${bad}.".toString() : null
+        if (bad) return "ownerFields may set only fields the application added to ${entityName}, not ${bad}.".toString()
+        if (existing != null) {
+            String moved = ownerFields.keySet().collect { it?.toString() }.find { String k ->
+                existing.get(k) != null && existing.get(k)?.toString() != ownerFields.get(k)?.toString()
+            }
+            if (moved) return "ownerFields cannot change ${moved} of an existing ${entityName}.".toString()
+        }
+        String hook = SystemBinding.getPropOrEnv('jexl_owner_fields_service')
+        if (hook) {
+            Map out = ec.service.sync().name(hook).parameters([entityName: entityName, ownerFields: ownerFields]).call()
+            if (ec.message.hasError()) {
+                String errors = ec.message.errorsString
+                ec.message.clearErrors()
+                return errors
+            }
+            if (out?.problem) return out.problem.toString()
+        }
+        return null
     }
 }

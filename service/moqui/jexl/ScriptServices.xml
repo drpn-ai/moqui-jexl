@@ -91,7 +91,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="notes" type="List"/>
         </out-parameters>
         <actions>
-            <set field="ownerProblem" from="org.moqui.jexl.script.OwnerFields.problem(ec, 'jexl.script.UserScript', ownerFields)"/>
+            <set field="ownerProblem" from="org.moqui.jexl.script.OwnerFields.problem(ec, 'jexl.script.UserScript', ownerFields,
+                    userScriptId ? ec.entity.find('jexl.script.UserScript').condition('userScriptId', userScriptId).disableAuthz().useCache(false).one() : null)"/>
             <if condition="ownerProblem"><return error="true" message="${ownerProblem}"/></if>
             <set field="checked" from="org.moqui.jexl.ScriptSupervisor.validate(scriptProfile, scriptBody)"/>
             <if condition="!checked.ok"><return error="true"
@@ -363,7 +364,8 @@ along with this software (see the LICENSE.md file). If not, see
                 too, since a screen grant may inherit authz down to this service) -->
             <if condition="!ec.user.userId || !org.moqui.jexl.ScriptDeploymentRunner.maySchedule(ec, ec.user.userId)">
                 <return error="true" message="Storing a deployment needs permission to schedule scripts."/></if>
-            <set field="ownerProblem" from="org.moqui.jexl.script.OwnerFields.problem(ec, 'jexl.script.UserScriptDeployment', ownerFields)"/>
+            <set field="ownerProblem" from="org.moqui.jexl.script.OwnerFields.problem(ec, 'jexl.script.UserScriptDeployment', ownerFields,
+                    scriptDeploymentId ? ec.entity.find('jexl.script.UserScriptDeployment').condition('scriptDeploymentId', scriptDeploymentId).disableAuthz().useCache(false).one() : null)"/>
             <if condition="ownerProblem"><return error="true" message="${ownerProblem}"/></if>
             <set field="deliveryList" from="deliveries ?: (deliveryServiceName ? [[deliveryServiceName:deliveryServiceName]] : [])"/>
             <if condition="!deliveryList"><message error="true">A deployment needs at least one delivery.</message></if>

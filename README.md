@@ -159,6 +159,7 @@ All are read with `SystemBinding.getPropOrEnv` (a system property or an environm
 | `jexl_email_attachment_bytes` | 20971520 | past this in all, the email goes without its files (`TOO_LARGE`) |
 | `jexl_run_retention_days` | 30 | how long run records are kept |
 | `jexl_owner_key_service` | none | a service returning `ownerKey` for a deployment (the lane's one-at-a-time key), default the owner user id |
+| `jexl_owner_fields_service` | none | a service (in `entityName`, `ownerFields`; out `problem`) that approves owner-field values before they are stored |
 | `jexl_busy_service` | none | a service whose `busyReason` out-parameter adds your app's own reason to wait |
 | `jexl_hold_heap_percent` | 70 | user scripts wait while heap after GC is at or over this (over 100 turns it off) |
 | `jexl_hold_cpu_percent` | 75 | the same for process CPU |
@@ -172,8 +173,9 @@ unit in real scripts, garbage included).
 
 The entities are in `jexl.script`, not `moqui.*`, so entity filters apply to them. Add your owner field to
 `UserScript`, `UserScriptDeployment`, `UserScriptRun` and `ScriptSource` with `extend-entity`, pass it to
-`store#UserScript` / `store#UserScriptDeployment` as `ownerFields` (a core field is refused there; a run record copies
-the extended fields it shares with its deployment), add an `EntityFilter`,
+`store#UserScript` / `store#UserScriptDeployment` as `ownerFields` (a core field is refused there, an existing record's
+owner fields never change, and `jexl_owner_fields_service` lets your app approve the values, e.g. that the caller acts
+for that organization; a run record copies the extended fields it shares with its deployment), add an `EntityFilter`,
 and expose scripts through your own (remote) services; none of this component's services are remote. Set
 `jexl_owner_key_service` so one organization's scripts run one at a time, and pass the same key as `ownerKey` to
 `run#UserScript`. Reads run as the owner in a fresh context, so your sources take the scope from `userScriptId` /

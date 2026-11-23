@@ -723,4 +723,34 @@ class UserScriptDeploymentTests extends Specification {
         then:
         ec.entity.find('jexl.script.UserScriptRun').condition('scriptDeploymentId', 'USD_TEST_ORGRUN').useCache(false).one().orgTag == 'ORG_B'
     }
+
+    def "ownerFieldsCannotMoveAnExistingRecord"() {
+        when:
+        call("${SVC}.store#UserScript", [userScriptId: 'USS_TEST_MOVE', scriptName: 'USS_TEST_MOVE', scriptBody: BACKORDERS, ownerFields: [orgTag: 'ORG_A']])
+        ec.message.clearErrors()
+        call("${SVC}.store#UserScript", [userScriptId: 'USS_TEST_MOVE', scriptName: 'USS_TEST_MOVE', scriptBody: BACKORDERS, ownerFields: [orgTag: 'ORG_B']])
+        String errors = ec.message.errorsString
+        ec.message.clearErrors()
+
+        then:
+        errors.contains('orgTag')
+        ec.entity.find('jexl.script.UserScript').condition('userScriptId', 'USS_TEST_MOVE').useCache(false).one().orgTag == 'ORG_A'
+    }
+
+    def "anAppHookChecksOwnerFieldValues"() {
+        given:
+        System.setProperty('jexl_owner_fields_service', "${TEST_SVC}.check#OwnerFields")
+
+        when:
+        call("${SVC}.store#UserScript", [userScriptId: 'USS_TEST_HOOK', scriptName: 'USS_TEST_HOOK', scriptBody: BACKORDERS, ownerFields: [orgTag: 'ORG_X']])
+        String errors = ec.message.errorsString
+        ec.message.clearErrors()
+
+        then:
+        errors.contains('You may not act for ORG_X')
+        ec.entity.find('jexl.script.UserScript').condition('userScriptId', 'USS_TEST_HOOK').useCache(false).one() == null
+
+        cleanup:
+        System.clearProperty('jexl_owner_fields_service')
+    }
 }
