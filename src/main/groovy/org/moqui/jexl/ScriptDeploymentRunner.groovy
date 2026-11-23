@@ -327,7 +327,12 @@ class ScriptDeploymentRunner {
 
             boolean wasDisabled = ec.artifactExecution.disableAuthz()
             try {
-            ec.entity.makeValue('jexl.script.UserScriptRun').setAll([scriptRunId: outcome.scriptRunId ?: ec.entity.sequencedIdPrimary('jexl.script.UserScriptRun', null, null),
+            // NOTE: the application's extended fields (an owner or organization field) follow the deployment onto its runs
+            Map<String, Object> carried = [:]
+            for (String f : org.moqui.jexl.script.OwnerFields.extended(ec, 'jexl.script.UserScriptRun')) {
+                if (deployment.getEntityDefinition().isField(f)) carried.put(f, deployment.get(f))
+            }
+            ec.entity.makeValue('jexl.script.UserScriptRun').setAll(carried).setAll([scriptRunId: outcome.scriptRunId ?: ec.entity.sequencedIdPrimary('jexl.script.UserScriptRun', null, null),
                     userScriptId: deployment.userScriptId, scriptDeploymentId: deploymentId, ownerUserId: deployment.ownerUserId,
                     startDate: outcome.startDate ?: ec.user.nowTimestamp, endDate: ec.user.nowTimestamp, statusId: outcome.status?.toString(),
                     errorKind: outcome.errorKind ?: (run.error instanceof Map ? ((Map) run.error).kind : null),
@@ -397,7 +402,8 @@ class ScriptDeploymentRunner {
         // NOTE: run records are pruned at most once an hour, on a scan
         if (System.currentTimeMillis() - lastPruned > 3_600_000L) {
             lastPruned = System.currentTimeMillis()
-            pruneRuns(ec, scanTime)
+            // NOTE: by the wall clock (the time run records are stamped with), not the scan's own time
+            pruneRuns(ec, new Timestamp(System.currentTimeMillis()))
         }
         int held = results.count { Map r -> r.status == WAITING || r.status == EXPIRED } as int
         return [ran: results.size() - held, held: held, results: results] as Map<String, Object>

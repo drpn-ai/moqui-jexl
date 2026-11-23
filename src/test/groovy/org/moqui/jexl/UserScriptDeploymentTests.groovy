@@ -680,4 +680,47 @@ class UserScriptDeploymentTests extends Specification {
         cleanup:
         ScriptDeploymentRunner.resetForTests()
     }
+
+    def "aCoreFieldCannotBeSetAsAnOwnerField"() {
+        when:
+        call("${SVC}.store#UserScript", [userScriptId: 'USS_TEST_ORGBAD', scriptName: 'USS_TEST_ORGBAD', scriptBody: BACKORDERS,
+                ownerFields: [orgTag: 'ORG_A', scriptBody: 'stolen']])
+        String errors = ec.message.errorsString
+        ec.message.clearErrors()
+
+        then:
+        errors.contains('not scriptBody')
+        ec.entity.find('jexl.script.UserScript').condition('userScriptId', 'USS_TEST_ORGBAD').useCache(false).one() == null
+    }
+
+    def "extendedFieldsAreStored"() {
+        when:
+        call("${SVC}.store#UserScript", [userScriptId: 'USS_TEST_ORG', scriptName: 'USS_TEST_ORG', scriptBody: BACKORDERS, ownerFields: [orgTag: 'ORG_A']])
+        String scriptErrors = ec.message.errorsString
+        call("${SVC}.store#UserScriptDeployment", [scriptDeploymentId: 'USD_TEST_ORG', userScriptId: 'USS_TEST_ORG',
+                cronExpression: '0 0 9 * * ?', inputServiceName: "${TEST_SVC}.read#Orders",
+                deliveryServiceName: "${TEST_SVC}.deliver#ToTestEntity", ownerFields: [orgTag: 'ORG_A']])
+        String deploymentErrors = ec.message.errorsString
+
+        then:
+        scriptErrors == ''
+        deploymentErrors == ''
+        ec.entity.find('jexl.script.UserScript').condition('userScriptId', 'USS_TEST_ORG').useCache(false).one().orgTag == 'ORG_A'
+        deployment('USD_TEST_ORG').orgTag == 'ORG_A'
+    }
+
+    def "runsCarryTheDeploymentsExtendedFields"() {
+        given:
+        storeScript('USS_TEST_BACK', BACKORDERS)
+        call("${SVC}.store#UserScriptDeployment", [scriptDeploymentId: 'USD_TEST_ORGRUN', userScriptId: 'USS_TEST_BACK',
+                cronExpression: '0 0 9 * * ?', inputServiceName: "${TEST_SVC}.read#Orders",
+                deliveryServiceName: "${TEST_SVC}.deliver#ToTestEntity", ownerFields: [orgTag: 'ORG_B']])
+        dueAt('USD_TEST_ORGRUN', at('2040-01-01T09:00:00Z'))
+
+        when:
+        call("${SVC}.run#DueUserScriptDeployments", [nowTimestamp: at('2040-01-01T09:01:00Z')])
+
+        then:
+        ec.entity.find('jexl.script.UserScriptRun').condition('scriptDeploymentId', 'USD_TEST_ORGRUN').useCache(false).one().orgTag == 'ORG_B'
+    }
 }

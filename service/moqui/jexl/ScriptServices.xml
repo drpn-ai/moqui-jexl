@@ -84,12 +84,15 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="sampleInputJson" allow-html="any"/>
             <parameter name="readSpecJson" allow-html="any"><description>The read step (org.moqui.jexl.script.ReadSpec); its sources must exist and implement read#ScriptSource.</description></parameter>
             <parameter name="isActive" default-value="Y"/>
+            <parameter name="ownerFields" type="Map"><description>Fields the application added to UserScript with extend-entity (an owner or organization field); core fields are refused.</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="userScriptId"/>
             <parameter name="notes" type="List"/>
         </out-parameters>
         <actions>
+            <set field="ownerProblem" from="org.moqui.jexl.script.OwnerFields.problem(ec, 'jexl.script.UserScript', ownerFields)"/>
+            <if condition="ownerProblem"><return error="true" message="${ownerProblem}"/></if>
             <set field="checked" from="org.moqui.jexl.ScriptSupervisor.validate(scriptProfile, scriptBody)"/>
             <if condition="!checked.ok"><return error="true"
                     message="${checked.error.line ? 'Line ' + checked.error.line + ': ' : ''}${checked.error.message}"/></if>
@@ -133,7 +136,7 @@ along with this software (see the LICENSE.md file). If not, see
                 }
             ]]></script><check-errors/></if>
             <service-call name="store#jexl.script.UserScript" out-map="context"
-                    in-map="[userScriptId:userScriptId, scriptName:scriptName, description:description, scriptProfile:checked.profile,
+                    in-map="(ownerFields ?: [:]) + [userScriptId:userScriptId, scriptName:scriptName, description:description, scriptProfile:checked.profile,
                         scriptBody:scriptBody, sampleInputJson:sampleInputJson, readSpecJson:readSpecJson ?: null,
                         ownerUserId:ec.user.userId, isActive:isActive]"/>
         </actions>
@@ -335,6 +338,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="deliveryServiceName"/>
             <parameter name="deliveries" type="List"><description>[{deliveryServiceName, parameters (Map) or parametersJson, isActive}]</description></parameter>
             <parameter name="isActive" default-value="Y"/>
+            <parameter name="ownerFields" type="Map"><description>Fields the application added to UserScriptDeployment with extend-entity; core fields are refused. Its runs copy them.</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="scriptDeploymentId"/>
@@ -359,6 +363,8 @@ along with this software (see the LICENSE.md file). If not, see
                 too, since a screen grant may inherit authz down to this service) -->
             <if condition="!ec.user.userId || !org.moqui.jexl.ScriptDeploymentRunner.maySchedule(ec, ec.user.userId)">
                 <return error="true" message="Storing a deployment needs permission to schedule scripts."/></if>
+            <set field="ownerProblem" from="org.moqui.jexl.script.OwnerFields.problem(ec, 'jexl.script.UserScriptDeployment', ownerFields)"/>
+            <if condition="ownerProblem"><return error="true" message="${ownerProblem}"/></if>
             <set field="deliveryList" from="deliveries ?: (deliveryServiceName ? [[deliveryServiceName:deliveryServiceName]] : [])"/>
             <if condition="!deliveryList"><message error="true">A deployment needs at least one delivery.</message></if>
             <iterate list="deliveryList" entry="oneDelivery">
@@ -374,7 +380,7 @@ along with this software (see the LICENSE.md file). If not, see
 
             <set field="nextRunDate" from="isActive == 'Y' ? org.moqui.jexl.ScriptDeploymentRunner.nextRunDate(cronExpression, timeZone, ec.user.nowTimestamp) : null"/>
             <service-call name="store#jexl.script.UserScriptDeployment" out-map="context"
-                    in-map="[scriptDeploymentId:scriptDeploymentId, userScriptId:userScriptId, cronExpression:cronExpression.trim(),
+                    in-map="(ownerFields ?: [:]) + [scriptDeploymentId:scriptDeploymentId, userScriptId:userScriptId, cronExpression:cronExpression.trim(),
                         timeZone:timeZone, inputServiceName:inputServiceName, ownerUserId:ec.user.userId,
                         isActive:isActive, nextRunDate:nextRunDate]"/>
             <entity-delete-by-condition entity-name="jexl.script.UserScriptDeploymentDelivery">

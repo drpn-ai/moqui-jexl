@@ -14,6 +14,10 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-definition-3.xsd">
+    <!-- an application's owner field, the way a multi-organization app adds one -->
+    <extend-entity entity-name="UserScript" package="jexl.script"><field name="orgTag" type="id"/></extend-entity>
+    <extend-entity entity-name="UserScriptDeployment" package="jexl.script"><field name="orgTag" type="id"/></extend-entity>
+    <extend-entity entity-name="UserScriptRun" package="jexl.script"><field name="orgTag" type="id"/></extend-entity>
     <entity entity-name="ReadThing" package="jexl.test" use="transactional">
         <field name="thingId" type="id" is-pk="true"/>
         <field name="ownerTag" type="id"/>

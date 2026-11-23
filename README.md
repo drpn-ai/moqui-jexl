@@ -5,7 +5,7 @@ try them, and put them on a schedule that emails or notifies them the answer, wi
 [Apache Commons JEXL](https://commons.apache.org/proper/commons-jexl/), run inside your own server behind limits and
 guardrails, and never write anything.
 
-Version 0.2.1. Until 1.0 the contract may still change (see CHANGELOG.md); from 1.0 it follows semantic versioning.
+Version 0.2.2. Until 1.0 the contract may still change (see CHANGELOG.md); from 1.0 it follows semantic versioning.
 
 ## What it adds
 
@@ -171,7 +171,9 @@ unit in real scripts, garbage included).
 ## Owner scoping for apps that serve many organizations
 
 The entities are in `jexl.script`, not `moqui.*`, so entity filters apply to them. Add your owner field to
-`UserScript`, `UserScriptDeployment`, `UserScriptRun` and `ScriptSource` with `extend-entity`, add an `EntityFilter`,
+`UserScript`, `UserScriptDeployment`, `UserScriptRun` and `ScriptSource` with `extend-entity`, pass it to
+`store#UserScript` / `store#UserScriptDeployment` as `ownerFields` (a core field is refused there; a run record copies
+the extended fields it shares with its deployment), add an `EntityFilter`,
 and expose scripts through your own (remote) services; none of this component's services are remote. Set
 `jexl_owner_key_service` so one organization's scripts run one at a time, and pass the same key as `ownerKey` to
 `run#UserScript`. Reads run as the owner in a fresh context, so your sources take the scope from `userScriptId` /

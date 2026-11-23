@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.2
+
+- `store#UserScript` and `store#UserScriptDeployment` take `ownerFields`: fields the application added with
+  `extend-entity` (an owner or organization field). A core field of the component is refused there. A run record
+  (`UserScriptRun`) copies the extended fields it shares with its deployment.
+- The hourly run-record prune goes by the wall clock (the time records are stamped with), not the scan's own time.
+
 ## 0.2.1
 
 - `read#ScriptSource` gains `userScriptId` and `ownerKey`, and `run#UserScript` gains `ownerKey` (the lane key, passed to
