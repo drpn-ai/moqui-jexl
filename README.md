@@ -5,7 +5,7 @@ try them, and put them on a schedule that emails or notifies them the answer, wi
 [Apache Commons JEXL](https://commons.apache.org/proper/commons-jexl/), run inside your own server behind limits and
 guardrails, and never write anything.
 
-Version 0.2.0. Until 1.0 the contract may still change (see CHANGELOG.md); from 1.0 it follows semantic versioning.
+Version 0.2.1. Until 1.0 the contract may still change (see CHANGELOG.md); from 1.0 it follows semantic versioning.
 
 ## What it adds
 
@@ -115,7 +115,8 @@ byte order mark); a text cell whose first visible character could start a spread
 ## Writing a read source
 
 A service that implements `moqui.jexl.ScriptServices.read#ScriptSource`: in `input` (the input as written), `ownerUserId`,
-`runDate`, `timeZone`, `maxRows`; out `rows` (plain maps), `rowCount`, or `error` `{kind: READ_NOT_ALLOWED | READ_ERROR |
+`userScriptId` (the saved script, empty for an unsaved run), `ownerKey` (the run's scope: what the host passed to
+`run#UserScript`, the deployment's owner key, or the user), `runDate`, `timeZone`, `maxRows`; out `rows` (plain maps), `rowCount`, or `error` `{kind: READ_NOT_ALLOWED | READ_ERROR |
 READ_TOO_LARGE, message}`. It runs logged in as the owner. `org.moqui.jexl.script.ReadConditions` matches, windows,
 groups and orders rows in memory if your source cannot push them down. Register it with
 `moqui.jexl.ScriptServices.store#ScriptSource` (name, service) and grant it through `JEXL_SOURCES`.
@@ -172,7 +173,9 @@ unit in real scripts, garbage included).
 The entities are in `jexl.script`, not `moqui.*`, so entity filters apply to them. Add your owner field to
 `UserScript`, `UserScriptDeployment`, `UserScriptRun` and `ScriptSource` with `extend-entity`, add an `EntityFilter`,
 and expose scripts through your own (remote) services; none of this component's services are remote. Set
-`jexl_owner_key_service` so one organization's scripts run one at a time.
+`jexl_owner_key_service` so one organization's scripts run one at a time, and pass the same key as `ownerKey` to
+`run#UserScript`. Reads run as the owner in a fresh context, so your sources take the scope from `userScriptId` /
+`ownerKey`, check the owner may use it, and set it up themselves.
 
 ## Example: orders by status
 

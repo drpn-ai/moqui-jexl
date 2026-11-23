@@ -118,7 +118,8 @@ class ScriptDeploymentRunner {
             } catch (ReadSpec.Invalid e) {
                 return [status: 'READ_ERROR', message: "Read spec: ${e.message}".toString(), startDate: started] as Map<String, Object>
             }
-            Map<String, Object> read = ReadStep.run(ec, spec, ownerUserId, ownerKey, started, deployment.getString('timeZone'), profile)
+            Map<String, Object> read = ReadStep.run(ec, spec, ownerUserId, ownerKey, started, deployment.getString('timeZone'), profile,
+                    deployment.getString('userScriptId'))
             if (!read.ok) return [status: read.status, message: read.message, startDate: started] as Map<String, Object>
             prepared = [input: read.input, inputSummary: [source: 'READ'], readCounts: read.readCounts] as Map<String, Object>
         } else {
@@ -310,6 +311,7 @@ class ScriptDeploymentRunner {
 
     /** Stamps a real run (scheduled or delivered by hand) on the deployment. A preview is never recorded. */
     static void recordOutcome(ExecutionContext ec, String deploymentId, Map<String, Object> outcome) {
+        if (beforeRecord != null) beforeRecord.call(deploymentId)
         Map run = outcome.run instanceof Map ? (Map) outcome.run : [:]
         ec.transaction.runUseOrBegin(30, 'Error recording a script deployment run', {
             EntityValue deployment = ec.entity.find(ENTITY).condition('scriptDeploymentId', deploymentId)
@@ -342,6 +344,8 @@ class ScriptDeploymentRunner {
     private static volatile long lastPruned = 0L
     /** Test seam: runs once a scan has loaded its due list, before it claims any of them. */
     static Closure afterDueLoaded = null
+    /** Test seam: runs before a run is recorded, with the deployment id. */
+    static Closure beforeRecord = null
 
     /** Deletes run records older than jexl_run_retention_days (default 30). */
     static int pruneRuns(ExecutionContext ec, Timestamp now) {
@@ -353,7 +357,7 @@ class ScriptDeploymentRunner {
                 .disableAuthz().deleteAll()
     }
 
-    static void resetForTests() { lastPruned = 0L; afterDueLoaded = null }
+    static void resetForTests() { lastPruned = 0L; afterDueLoaded = null; beforeRecord = null }
 
     /**
      * The scheduled pass: every active deployment whose nextRunDate has come, each claimed (its next run date moved
@@ -381,7 +385,12 @@ class ScriptDeploymentRunner {
             if (!updateIfStillDue(ec, id, scanTime) { EntityValue current -> current.set('nextRunDate', next); claimed = current }) continue
             // NOTE: runs on the row re-read under the lock, not the one loaded when the scan started (its owner may have changed)
             Map<String, Object> outcome = execute(ec, claimed ?: deployment, true)
-            recordOutcome(ec, id, outcome)
+            // NOTE: one run that cannot be recorded never stops the rest of the pass
+            try {
+                recordOutcome(ec, id, outcome)
+            } catch (Throwable t) {
+                logger.error("Script deployment ${id} ran (${outcome.status}) but its run could not be recorded", t)
+            }
             logger.info("Script deployment ${id} ran: ${outcome.status} ${outcome.message}")
             results << ([scriptDeploymentId: id, status: outcome.status, message: outcome.message, nextRunDate: next] as Map<String, Object>)
         }

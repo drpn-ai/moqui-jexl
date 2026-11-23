@@ -194,4 +194,20 @@ class ReadStepTests extends Specification {
         System.clearProperty('jexl_read_timeout_ms')
         System.clearProperty('jexl_lane_grace_ms')
     }
+
+    def "aSourceIsToldItsScriptAndOwnerKey"() {
+        when:
+        ec.service.sync().name("${SVC}.store#UserScript").parameters([userScriptId: 'USS_READ_SCOPE', scriptName: 'scope read',
+                scriptBody: 'input.who[0]', readSpecJson: '{"inputs":[{"name":"who","source":"fixed","fields":["userScriptId"],"echoScope":true}]}']).call()
+        ec.message.clearErrors()
+        Map saved = ec.service.sync().name("${SVC}.run#UserScript").parameters([userScriptId: 'USS_READ_SCOPE', ownerKey: 'ORG_A']).call()
+        Map adHoc = run([inputs: [[name: 'who', source: 'fixed', fields: ['userScriptId'], echoScope: true]]], 'input.who[0]')
+
+        then:
+        saved.ok
+        saved.scriptResult == [userScriptId: 'USS_READ_SCOPE', ownerKey: 'ORG_A']
+        adHoc.ok
+        adHoc.scriptResult.userScriptId == null
+        adHoc.scriptResult.ownerKey == ec.user.userId
+    }
 }

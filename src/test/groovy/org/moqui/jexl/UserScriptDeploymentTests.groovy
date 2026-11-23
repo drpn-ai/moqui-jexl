@@ -660,4 +660,24 @@ class UserScriptDeploymentTests extends Specification {
         ec.entity.find('moqui.security.ArtifactGroupMember').condition([artifactGroupId: 'JEXL_SCRIPT_SCHEDULE',
                 artifactName: "${TEST_SVC}.deliver#RecordUser".toString()]).deleteAll()
     }
+
+    def "oneFailedRecordDoesNotStopTheScan"() {
+        given:
+        storeScript('USS_TEST_BACK', BACKORDERS)
+        storeDeployment('USD_TEST_REC_A', 'USS_TEST_BACK', "${TEST_SVC}.deliver#ToTestEntity")
+        storeDeployment('USD_TEST_REC_B', 'USS_TEST_BACK', "${TEST_SVC}.deliver#ToTestEntity")
+        dueAt('USD_TEST_REC_A', at('2039-01-01T09:00:00Z'))
+        dueAt('USD_TEST_REC_B', at('2039-01-01T09:00:30Z'))
+        ScriptDeploymentRunner.beforeRecord = { String id -> if (id == 'USD_TEST_REC_A') throw new IllegalStateException('record failed') }
+
+        when:
+        Map out = call("${SVC}.run#DueUserScriptDeployments", [nowTimestamp: at('2039-01-01T09:01:00Z')])
+
+        then:
+        out.results*.scriptDeploymentId.containsAll(['USD_TEST_REC_A', 'USD_TEST_REC_B'])
+        deployment('USD_TEST_REC_B').lastRunStatus == 'OK'
+
+        cleanup:
+        ScriptDeploymentRunner.resetForTests()
+    }
 }

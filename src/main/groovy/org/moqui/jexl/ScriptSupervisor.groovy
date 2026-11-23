@@ -329,7 +329,9 @@ class ScriptSupervisor {
         if (value instanceof BigDecimal) return checkInputDecimal((BigDecimal) value)
         if (value instanceof BigInteger || value instanceof Long || value instanceof Integer) return value
         if (value instanceof Number) return checkInputDecimal(new BigDecimal(value.toString()))
-        if (value instanceof CharSequence || value instanceof Date || value instanceof java.time.temporal.Temporal) return value.toString()
+        // NOTE: a date reaches the script as an ISO-8601 instant, the same form as input.run.date, never a server-local text
+        if (value instanceof Date) return ((Date) value).toInstant().toString()
+        if (value instanceof CharSequence || value instanceof java.time.temporal.Temporal) return value.toString()
         if (value instanceof Map) {
             Map<String, Object> out = new LinkedHashMap<>()
             ((Map) value).each { Object key, Object item -> out.put(String.valueOf(key), copyNode(item, depth + 1, tally)) }

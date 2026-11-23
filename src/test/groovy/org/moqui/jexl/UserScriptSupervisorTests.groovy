@@ -585,4 +585,12 @@ class UserScriptSupervisorTests extends Specification {
         expect:
         !ScriptSupervisor.evaluate('SCRIPT', "fn:push('text', 1)", [:]).ok
     }
+
+    def "datesReachTheScriptAsIsoInstants"() {
+        given:
+        java.sql.Timestamp when = java.sql.Timestamp.valueOf('2026-11-20 10:00:00')
+
+        expect:
+        ScriptSupervisor.evaluate('SCRIPT', 'input.d', [d: when]).result == when.toInstant().toString()
+    }
 }

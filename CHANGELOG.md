@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.1
+
+- `read#ScriptSource` gains `userScriptId` and `ownerKey`, and `run#UserScript` gains `ownerKey` (the lane key, passed to
+  sources): a source runs as the owner in a fresh context, so it needs to know which script and scope it reads for.
+- Dates reach a script as ISO-8601 instants (`2026-11-20T10:00:00Z`), the same form as `input.run.date`, not
+  server-local text.
+- A run that cannot be recorded no longer stops the rest of a scheduler pass.
+- `UserScriptRun.readCountsJson` is `text-long` (many long input names overflowed `text-medium`). Existing tables keep
+  their column type until altered by hand.
+
 ## 0.2.0
 
 A complete user-scripts feature for any Moqui application. Breaking changes from the first published commit

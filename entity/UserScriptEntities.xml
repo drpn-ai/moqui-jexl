@@ -101,7 +101,7 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="errorKind" type="text-short"><description>For SCRIPT_ERROR: UNITS, TIME, MEMORY, NOT_ALLOWED, ERROR, ...</description></field>
         <field name="units" type="number-integer"/>
         <field name="elapsedMs" type="number-integer"/>
-        <field name="readCountsJson" type="text-medium"><description>Rows each input handed the script.</description></field>
+        <field name="readCountsJson" type="text-long"><description>Rows each input handed the script.</description></field>
         <field name="deliveryOutcomesJson" type="text-long"/>
         <field name="message" type="text-medium"/>
 

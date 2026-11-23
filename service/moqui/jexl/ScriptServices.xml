@@ -150,6 +150,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="input" type="Object"><description>Any JSON-shaped value; copied before the script sees it.</description></parameter>
             <parameter name="inputJson" allow-html="any"/>
             <parameter name="readSpecJson" allow-html="any"><description>A read step to run first, as the logged-in user; a saved script's own when not given.</description></parameter>
+            <parameter name="ownerKey"><description>Whose one-at-a-time slot the run takes, also passed to read sources as the scope; default the logged-in user.</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="ok" type="Boolean"/>
@@ -186,8 +187,8 @@ along with this software (see the LICENSE.md file). If not, see
                 } catch (org.moqui.jexl.script.ReadSpec.Invalid e) {
                     ok = false; error = [kind: 'READ_ERROR', message: "Read spec: ${e.message}".toString()]; return
                 }
-                Map read = org.moqui.jexl.script.ReadStep.run(ec, spec, ec.user.userId, ec.user.userId, ec.user.nowTimestamp,
-                        ec.user.timeZone?.ID, org.moqui.jexl.ScriptProfiles.get(scriptProfile))
+                Map read = org.moqui.jexl.script.ReadStep.run(ec, spec, ec.user.userId, ownerKey ?: ec.user.userId, ec.user.nowTimestamp,
+                        ec.user.timeZone?.ID, org.moqui.jexl.ScriptProfiles.get(scriptProfile), userScriptId)
                 if (!read.ok) { ok = false; error = [kind: read.status, message: read.message]; return }
                 input = read.input
                 readCounts = read.readCounts
@@ -201,7 +202,7 @@ along with this software (see the LICENSE.md file). If not, see
                 }
             </script><check-errors/></if>
 
-            <set field="run" from="org.moqui.jexl.ScriptSupervisor.evaluate(scriptProfile, scriptBody, input, ec.user.userId ?: 'anonymous')"/>
+            <set field="run" from="org.moqui.jexl.ScriptSupervisor.evaluate(scriptProfile, scriptBody, input, ownerKey ?: ec.user.userId ?: 'anonymous')"/>
             <set field="ok" from="run.ok"/>
             <set field="scriptResult" from="run.result"/>
             <if condition="run.ok"><set field="normalizedResult" from="org.moqui.jexl.script.ScriptResult.normalize(run.result, org.moqui.jexl.ScriptProfiles.get(scriptProfile))"/></if>
@@ -224,6 +225,8 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters>
             <parameter name="input" type="Map" required="true"><description>The input as written in the read spec.</description></parameter>
             <parameter name="ownerUserId"/>
+            <parameter name="userScriptId"><description>The saved script the read is for; empty for an unsaved (ad hoc) run.</description></parameter>
+            <parameter name="ownerKey"><description>The run's owner key (the lane key: what the host passed, or the deployment's key, or the user), so a source can tell which scope it reads for.</description></parameter>
             <parameter name="runDate" type="Timestamp"/>
             <parameter name="timeZone"/>
             <parameter name="maxRows" type="Integer"/>

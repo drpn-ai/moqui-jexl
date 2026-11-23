@@ -61,7 +61,7 @@ class ReadStep {
     }
 
     static Map<String, Object> run(ExecutionContext ec, ReadSpec spec, String ownerUserId, String ownerKey, Timestamp runDate,
-                                   String timeZone, ScriptProfile profile) {
+                                   String timeZone, ScriptProfile profile, String userScriptId = null) {
         Map<String, Object> resolved = resolveSources(ec, spec)
         if (!resolved.ok) return resolved
         Map<String, String> services = (Map<String, String>) resolved.services
@@ -73,6 +73,7 @@ class ReadStep {
                 Map<String, Long> counts = new LinkedHashMap<>()
                 for (ReadSpec.Input item : spec.inputs) {
                     Map out = own.service.sync().name(services[item.name]).parameters([input: item.raw, ownerUserId: ownerUserId,
+                            userScriptId: userScriptId, ownerKey: ownerKey ?: ownerUserId,
                             runDate: runDate, timeZone: timeZone, maxRows: maxRows]).call()
                     if (own.message.hasError()) {
                         String errors = own.message.errorsString
